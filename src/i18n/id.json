@@ -565,6 +565,7 @@
   "livetv.epgListExpand": "Tampilkan panduan lengkap",
   "livetv.epgListCollapse": "Tampilkan yang sedang tayang saja",
   "livetv.epgLoadEarlier": "Muat sebelumnya",
+  "livetv.epgLoadLater": "Muat berikutnya",
   "livetv.idle": "Diam",
   "livetv.pickChannel": "Pilih saluran.",
   "livetv.pickChannelHelper": "Pilih dari daftar, atau ubah kategori.",

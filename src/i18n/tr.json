@@ -565,6 +565,7 @@
   "livetv.epgListExpand": "Tüm yayın akışını göster",
   "livetv.epgListCollapse": "Sadece şu an yayınlananı göster",
   "livetv.epgLoadEarlier": "Öncekileri yükle",
+  "livetv.epgLoadLater": "Sonrakileri yükle",
   "livetv.idle": "Boşta",
   "livetv.pickChannel": "Bir kanal seçin.",
   "livetv.pickChannelHelper": "Listeden seçin veya kategoriyi değiştirin.",

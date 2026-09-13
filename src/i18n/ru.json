@@ -565,6 +565,7 @@
   "livetv.epgListExpand": "Показать полную программу",
   "livetv.epgListCollapse": "Показать только текущую передачу",
   "livetv.epgLoadEarlier": "Загрузить более ранние",
+  "livetv.epgLoadLater": "Загрузить более поздние",
   "livetv.idle": "Ожидание",
   "livetv.pickChannel": "Выберите канал.",
   "livetv.pickChannelHelper": "Выберите из списка или смените категорию.",

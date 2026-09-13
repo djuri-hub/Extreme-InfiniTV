@@ -514,7 +514,9 @@ function renderChannelRow(channel, programmesForRow) {
     const cell = document.createElement("button")
     cell.type = "button"
     cell.className =
-      "epg-cell absolute top-1 bottom-1 rounded-lg px-2 py-1 text-left outline-none " +
+      "epg-cell absolute top-1 bottom-1 rounded-lg px-2 " +
+      (ROW_HEIGHT <= 44 ? "py-0.5 " : "py-1 ") +
+      "flex flex-col justify-center gap-0.5 leading-tight text-left outline-none " +
       "border transition-[background-color,color,border-color,transform] duration-150 ease-out overflow-hidden " +
       "active:scale-[0.97] " +
       (isLive
@@ -548,7 +550,7 @@ function renderChannelRow(channel, programmesForRow) {
     })
 
     const titleLine = document.createElement("div")
-    titleLine.className = "truncate text-xs font-medium"
+    titleLine.className = "truncate w-full min-w-0 leading-tight text-xs font-medium"
     if (canReplay) {
       const replayDot = document.createElement("span")
       replayDot.className = "epg-cell-replay-dot"
@@ -559,7 +561,7 @@ function renderChannelRow(channel, programmesForRow) {
       titleLine.textContent = p.title
     }
     const timeLine = document.createElement("div")
-    timeLine.className = "truncate text-2xs text-fg-3 tabular-nums"
+    timeLine.className = "truncate w-full min-w-0 leading-tight text-2xs text-fg-3 tabular-nums"
     timeLine.textContent = `${fmtTime(p.start)}–${fmtTime(p.stop)}`
     cell.append(titleLine, timeLine)
 

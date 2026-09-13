@@ -565,6 +565,7 @@
   "livetv.epgListExpand": "Vollständigen Programmführer anzeigen",
   "livetv.epgListCollapse": "Nur aktuelle Sendung anzeigen",
   "livetv.epgLoadEarlier": "Frühere laden",
+  "livetv.epgLoadLater": "Spätere laden",
   "livetv.idle": "Inaktiv",
   "livetv.pickChannel": "Wähle einen Sender.",
   "livetv.pickChannelHelper": "Wähle aus der Liste oder ändere die Kategorie.",

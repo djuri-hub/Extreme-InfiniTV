@@ -565,6 +565,7 @@
   "livetv.epgListExpand": "番組表をすべて表示",
   "livetv.epgListCollapse": "現在放送中の番組のみ表示",
   "livetv.epgLoadEarlier": "さらに前を読み込む",
+  "livetv.epgLoadLater": "さらに後を読み込む",
   "livetv.idle": "アイドル",
   "livetv.pickChannel": "チャンネルを選んでください。",
   "livetv.pickChannelHelper": "リストから選ぶか、カテゴリを変更してください。",

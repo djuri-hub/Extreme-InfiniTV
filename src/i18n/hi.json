@@ -565,6 +565,7 @@
   "livetv.epgListExpand": "पूरी गाइड दिखाएं",
   "livetv.epgListCollapse": "सिर्फ़ अभी चल रहा कार्यक्रम दिखाएं",
   "livetv.epgLoadEarlier": "पुराने लोड करें",
+  "livetv.epgLoadLater": "बाद के लोड करें",
   "livetv.idle": "निष्क्रिय",
   "livetv.pickChannel": "एक चैनल चुनें।",
   "livetv.pickChannelHelper": "सूची से चुनें, या श्रेणी बदलें।",

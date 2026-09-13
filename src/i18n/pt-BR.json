@@ -565,6 +565,7 @@
   "livetv.epgListExpand": "Mostrar guia completo",
   "livetv.epgListCollapse": "Mostrar apenas o que está no ar",
   "livetv.epgLoadEarlier": "Carregar anteriores",
+  "livetv.epgLoadLater": "Carregar posteriores",
   "livetv.idle": "Inativo",
   "livetv.pickChannel": "Escolha um canal.",
   "livetv.pickChannelHelper": "Escolha na lista ou troque de categoria.",

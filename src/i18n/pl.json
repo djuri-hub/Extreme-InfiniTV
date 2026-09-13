@@ -565,6 +565,7 @@
   "livetv.epgListExpand": "Pokaż pełny program",
   "livetv.epgListCollapse": "Pokaż tylko aktualny program",
   "livetv.epgLoadEarlier": "Wczytaj wcześniejsze",
+  "livetv.epgLoadLater": "Wczytaj późniejsze",
   "livetv.idle": "Bezczynny",
   "livetv.pickChannel": "Wybierz kanał.",
   "livetv.pickChannelHelper": "Wybierz z listy lub zmień kategorię.",

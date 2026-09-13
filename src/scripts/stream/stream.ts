@@ -176,6 +176,7 @@ const CHANNELS_TTL_MS = 24 * 60 * 60 * 1000
 // One "page" of the side EPG panel's past window; the "Load earlier" button loads another, up to a 7-day cap.
 const EPG_SIDE_PANEL_PAST_WINDOW_MS = 24 * 60 * 60 * 1000
 const EPG_SIDE_PANEL_MAX_PAST_DAYS = 7
+const EPG_SIDE_PANEL_UPCOMING_PAGE_SIZE = 10
 
 let currentlyPlayingId = null
 // Tracks the channel that was playing before the current one, so `\` can flip back to it.
@@ -5399,6 +5400,8 @@ let epgListChannelId = 0
 let epgListChannelName = ""
 // Number of EPG_SIDE_PANEL_PAST_WINDOW_MS pages currently shown; grows via the "Load earlier" button.
 let epgSidePanelPastPages = 1
+// Number of EPG_SIDE_PANEL_UPCOMING_PAGE_SIZE pages currently shown; grows via the "Load later" button.
+let epgSidePanelUpcomingPages = 1
 let epgSidePanelExtending = false
 
 const epgDayKey = (ms) => new Date(ms).toDateString()
@@ -5551,26 +5554,33 @@ async function loadEPG(streamId) {
   }
 }
 
-/** Splits a sorted programme array into the upcoming slice (next 10) and a past slice sized by `pastPages` (page 1 shows the 8 most recent, "Load earlier" pages grow the window). */
-function computeEpgSidePanelWindow(programmes, pastPages, supportsCatchup) {
+/** Splits a sorted programme array into the upcoming slice (sized by `upcomingPages`, "Load later" pages grow it), a past slice sized by `pastPages` (page 1 shows the 8 most recent, "Load earlier" pages grow the window), and whether more upcoming programmes remain beyond the slice. */
+function computeEpgSidePanelWindow(programmes, pastPages, supportsCatchup, upcomingPages) {
   const now = Date.now()
-  const upcoming = programmes.filter((programme) => programme.stop >= now).slice(0, 10)
+  const upcomingAll = programmes.filter((programme) => programme.stop >= now)
+  const upcomingLimit = upcomingPages * EPG_SIDE_PANEL_UPCOMING_PAGE_SIZE
+  const upcoming = upcomingAll.slice(0, upcomingLimit)
+  const hasMoreUpcoming = upcomingAll.length > upcomingLimit
   const pastWindowMs = pastPages * EPG_SIDE_PANEL_PAST_WINDOW_MS
   const pastWithinWindow = supportsCatchup
     ? programmes.filter((programme) => programme.stop < now && now - programme.stop <= pastWindowMs)
     : []
   const past = pastPages > 1 ? pastWithinWindow : pastWithinWindow.slice(-8)
-  return { past, upcoming }
+  return { past, upcoming, hasMoreUpcoming }
 }
 
 /** Shared side-panel renderer for past + upcoming rows; timesAreDisplayed marks entry times as display-shifted rather than raw provider UTC. */
-function renderEpgSidePanelRows(past, upcoming, { timesAreDisplayed, canLoadEarlier, isNewChannelPaint }) {
+function renderEpgSidePanelRows(past, upcoming, { timesAreDisplayed, canLoadEarlier, canLoadLater, isNewChannelPaint }) {
   const combined = [...past, ...upcoming]
   epgListData = combined
   const now = Date.now()
   const loadEarlierHtml = canLoadEarlier
     ? `<button type="button" data-epg-load-earlier
          class="block w-full min-h-11 rounded-lg bg-surface-2 hover:bg-surface-3 focus-visible:ring-1 focus-visible:ring-accent text-sm text-fg-2 transition-colors">${escapeHtml(t("livetv.epgLoadEarlier"))}</button>`
+    : ""
+  const loadLaterHtml = canLoadLater
+    ? `<button type="button" data-epg-load-later
+         class="block w-full min-h-11 rounded-lg bg-surface-2 hover:bg-surface-3 focus-visible:ring-1 focus-visible:ring-accent text-sm text-fg-2 transition-colors">${escapeHtml(t("livetv.epgLoadLater"))}</button>`
     : ""
 
   let previousDayKey = epgDayKey(now)
@@ -5621,7 +5631,7 @@ function renderEpgSidePanelRows(past, upcoming, { timesAreDisplayed, canLoadEarl
         </button>`
     })
     .join("")
-  epgList.innerHTML = loadEarlierHtml + rowsHtml
+  epgList.innerHTML = loadEarlierHtml + rowsHtml + loadLaterHtml
 
   // Fresh channel tune lands the panel on the playing/live/upcoming entry; same-channel repaints keep position.
   if (isNewChannelPaint && epgPanel) {
@@ -5648,7 +5658,10 @@ function paintSidePanelFromXmltv(streamId) {
     return
   }
   const isNewChannelPaint = streamId !== epgListChannelId
-  if (isNewChannelPaint) epgSidePanelPastPages = 1
+  if (isNewChannelPaint) {
+    epgSidePanelPastPages = 1
+    epgSidePanelUpcomingPages = 1
+  }
   epgListChannelId = streamId
   epgListChannelName = channel.name || ""
 
@@ -5671,7 +5684,12 @@ function paintSidePanelFromXmltv(streamId) {
   }
 
   const supportsCatchup = channelSupportsCatchup(channel)
-  const { past, upcoming } = computeEpgSidePanelWindow(programmes, epgSidePanelPastPages, supportsCatchup)
+  const { past, upcoming, hasMoreUpcoming } = computeEpgSidePanelWindow(
+    programmes,
+    epgSidePanelPastPages,
+    supportsCatchup,
+    epgSidePanelUpcomingPages,
+  )
   if (!past.length && !upcoming.length) {
     epgList.innerHTML = `<div class="text-fg-3" data-i18n="epg.sidePanelEmpty">${escapeHtml(t("epg.sidePanelEmpty"))}</div>`
     epgListData = []
@@ -5681,7 +5699,12 @@ function paintSidePanelFromXmltv(streamId) {
 
   const maxPastPages = Math.min(catchupWindowDays(channel), EPG_SIDE_PANEL_MAX_PAST_DAYS)
   const canLoadEarlier = supportsCatchup && epgSidePanelPastPages < maxPastPages
-  renderEpgSidePanelRows(past, upcoming, { timesAreDisplayed: true, canLoadEarlier, isNewChannelPaint })
+  renderEpgSidePanelRows(past, upcoming, {
+    timesAreDisplayed: true,
+    canLoadEarlier,
+    canLoadLater: hasMoreUpcoming,
+    isNewChannelPaint,
+  })
 }
 
 // ----------------------------
@@ -5770,18 +5793,58 @@ function xtreamListingsToProgrammes(listings) {
   }))
 }
 
-function renderXtreamEpgEntries(channel, programmes, isNewChannelPaint) {
-  const { past, upcoming } = computeEpgSidePanelWindow(programmes, epgSidePanelPastPages, true)
-  const maxPastPages = Math.min(catchupWindowDays(channel), EPG_SIDE_PANEL_MAX_PAST_DAYS)
-  const canLoadEarlier = epgSidePanelPastPages < maxPastPages
-  renderEpgSidePanelRows(past, upcoming, { timesAreDisplayed: true, canLoadEarlier, isNewChannelPaint })
+/** Same XMLTV lookup as paintSidePanelFromXmltv (effective tvg-id + tvg-shift), used to fill the gaps some providers leave in the Xtream full table. */
+function xtreamChannelXmltvProgrammes(channel) {
+  const tvgId = effectiveTvgId(channel, activePlaylistId)
+  if (!tvgId) return []
+  const state = getProgrammesSync(activePlaylistId)
+  return shiftChannelProgrammes(state?.programmes?.get(tvgId) || [], channel.tvgShift)
 }
 
-/** Xtream variant of paintSidePanelFromXmltv: fetches the full EPG table for catch-up-capable channels; falls back to loadEPG's short list when the table is unavailable. */
+/** Merges the Xtream full-table programmes with XMLTV programmes for the same channel into one sorted list, deduplicating entries whose start times land within 60s of each other. Full-table entries win on a duplicate since they carry hasArchive. */
+function mergeSidePanelProgrammes(fullTableProgrammes, xmltvProgrammes) {
+  const DEDUPE_WINDOW_MS = 60 * 1000
+  const merged = [...fullTableProgrammes]
+  for (const xmltvProgramme of xmltvProgrammes) {
+    const isDuplicate = fullTableProgrammes.some(
+      (fullTableProgramme) => Math.abs(fullTableProgramme.start - xmltvProgramme.start) <= DEDUPE_WINDOW_MS,
+    )
+    if (!isDuplicate) merged.push(xmltvProgramme)
+  }
+  return merged.sort((a, b) => a.start - b.start)
+}
+
+/** Renders the side panel for an Xtream channel from the merge of full-table + XMLTV programmes; falls back to loadEPG's short list only when both sources are empty. */
+function renderXtreamEpgEntries(channel, fullTableProgrammes, isNewChannelPaint) {
+  const mergedProgrammes = mergeSidePanelProgrammes(fullTableProgrammes, xtreamChannelXmltvProgrammes(channel))
+  if (!mergedProgrammes.length) {
+    loadEPG(channel.id)
+    return
+  }
+  const { past, upcoming, hasMoreUpcoming } = computeEpgSidePanelWindow(
+    mergedProgrammes,
+    epgSidePanelPastPages,
+    true,
+    epgSidePanelUpcomingPages,
+  )
+  const maxPastPages = Math.min(catchupWindowDays(channel), EPG_SIDE_PANEL_MAX_PAST_DAYS)
+  const canLoadEarlier = epgSidePanelPastPages < maxPastPages
+  renderEpgSidePanelRows(past, upcoming, {
+    timesAreDisplayed: true,
+    canLoadEarlier,
+    canLoadLater: hasMoreUpcoming,
+    isNewChannelPaint,
+  })
+}
+
+/** Xtream variant of paintSidePanelFromXmltv: fetches the full EPG table for catch-up-capable channels, merges it with XMLTV programmes, and falls back to loadEPG's short list when both are unavailable. */
 async function paintSidePanelFromXtreamEpg(streamId, channel) {
   if (!epgList) return
   const isNewChannelPaint = streamId !== epgListChannelId
-  if (isNewChannelPaint) epgSidePanelPastPages = 1
+  if (isNewChannelPaint) {
+    epgSidePanelPastPages = 1
+    epgSidePanelUpcomingPages = 1
+  }
   epgListChannelId = streamId
   epgListChannelName = channel.name || ""
   epgListData = []
@@ -5794,11 +5857,8 @@ async function paintSidePanelFromXtreamEpg(streamId, channel) {
   const listings = await fetchXtreamFullEpg(channel)
   // A different channel has since taken over the panel while the fetch was in flight.
   if (epgListChannelId !== streamId) return
-  if (!listings || !listings.length) {
-    loadEPG(streamId)
-    return
-  }
-  renderXtreamEpgEntries(channel, xtreamListingsToProgrammes(listings), isNewChannelPaint)
+  // renderXtreamEpgEntries merges in XMLTV programmes and falls back to loadEPG only when both sources are empty.
+  renderXtreamEpgEntries(channel, listings ? xtreamListingsToProgrammes(listings) : [], isNewChannelPaint)
 }
 
 /** Side-panel EPG router: XMLTV for M3U channels, full table for catch-up-capable Xtream channels, short EPG otherwise. */
@@ -5850,10 +5910,48 @@ function extendSidePanelPastWindow() {
   epgSidePanelExtending = false
 }
 
+/** Loads one more page of upcoming programmes into the side panel, re-rendering while keeping scroll position (new rows land below the fold). Works for both the M3U (XMLTV) and Xtream side panels. */
+function extendSidePanelUpcomingWindow() {
+  if (epgSidePanelExtending) return
+  const streamId = epgListChannelId
+  const channel = all.find((entry) => entry.id === streamId)
+  if (!channel) return
+
+  const isM3uPanel = hasDirectUrl(streamId)
+  const cachedXtreamEntries = isM3uPanel ? null : peekXtreamFullEpgCache(channel)
+  // No fresh cache to extend from: refetch instead of consuming a page on a no-op.
+  if (!isM3uPanel && !cachedXtreamEntries) {
+    void paintSidePanelFromXtreamEpg(streamId, channel)
+    return
+  }
+
+  epgSidePanelExtending = true
+  const focusWasInList = !!epgList && epgList.contains(document.activeElement)
+  const previousCombinedLength = epgListData.length
+  epgSidePanelUpcomingPages += 1
+  const previousScrollTop = epgPanel?.scrollTop ?? 0
+  if (isM3uPanel) {
+    paintSidePanelFromXmltv(streamId)
+  } else {
+    renderXtreamEpgEntries(channel, xtreamListingsToProgrammes(cachedXtreamEntries), false)
+  }
+  if (epgPanel) epgPanel.scrollTop = previousScrollTop
+  if (focusWasInList) {
+    const nextFocusTarget =
+      epgList?.querySelector(`[data-epg-idx="${previousCombinedLength}"]`) ?? epgList?.querySelector("[data-epg-load-later]")
+    if (nextFocusTarget instanceof HTMLElement) nextFocusTarget.focus({ preventScroll: true })
+  }
+  epgSidePanelExtending = false
+}
+
 epgList?.addEventListener("click", async (e) => {
   const target = /** @type {HTMLElement | null} */ (e.target)
   if (target?.closest("[data-epg-load-earlier]")) {
     extendSidePanelPastWindow()
+    return
+  }
+  if (target?.closest("[data-epg-load-later]")) {
+    extendSidePanelUpcomingWindow()
     return
   }
   const btn = target?.closest("[data-epg-idx]")

@@ -565,6 +565,7 @@
   "livetv.epgListExpand": "Volledige gids weergeven",
   "livetv.epgListCollapse": "Alleen wat nu speelt weergeven",
   "livetv.epgLoadEarlier": "Eerdere laden",
+  "livetv.epgLoadLater": "Latere laden",
   "livetv.idle": "Inactief",
   "livetv.pickChannel": "Kies een kanaal.",
   "livetv.pickChannelHelper": "Kies uit de lijst, of wijzig de categorie.",
