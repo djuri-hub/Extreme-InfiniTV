@@ -249,7 +249,7 @@ function currentProgrammeFor(
   playlistId: string
 ): { title: string; start: number; stop: number } | null {
   if (liveEpgSource === "short-epg") {
-    return shortEpgNowNextSlot(liveNowNextCache.get(liveNowNextCacheKey(playlistId, channel.id)) ?? null).current
+    return shortEpgNowNextSlot(liveNowNextCache.get(liveNowNextCacheKey(playlistId, channel.id)) ?? null, playlistId).current
   }
   const state = getProgrammesSync(playlistId)
   if (!state) return null
@@ -1247,7 +1247,10 @@ const view: TvView = {
       const channelId = focusKey.split(":").pop()
       const meta = track.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(focusKey)}"] [data-card-meta]`)
       if (meta && channelId) {
-        const slot = shortEpgNowNextSlot(liveNowNextCache.get(liveNowNextCacheKey(activePlaylistId, channelId)) ?? null)
+        const slot = shortEpgNowNextSlot(
+          liveNowNextCache.get(liveNowNextCacheKey(activePlaylistId, channelId)) ?? null,
+          activePlaylistId
+        )
         meta.textContent = slot.current?.title || ""
       }
       if (lastFocusKey === focusKey) updateHeroForFocusKey(focusKey)

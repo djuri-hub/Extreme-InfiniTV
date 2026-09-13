@@ -211,7 +211,7 @@ export function createOsd(host: HTMLElement, options: OsdOptions = {}): OsdHandl
     const epgState = getProgrammesSync(playlistId)
     const tvgId = epgState ? effectiveTvgId(channel, playlistId) : ""
     if (epgState && tvgId) return computeNowNext(epgState.programmes, channel, playlistId)
-    return shortEpgNowNextSlot(shortEpgBannerCache.get(`${playlistId}:${channel.id}`) ?? null)
+    return shortEpgNowNextSlot(shortEpgBannerCache.get(`${playlistId}:${channel.id}`) ?? null, playlistId)
   }
 
   // Memory-conservative TVs never bulk-load XMLTV, so the banner falls back to the

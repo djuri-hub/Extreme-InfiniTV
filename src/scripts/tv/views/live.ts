@@ -26,6 +26,8 @@ import {
   loadProgrammes,
   getProgrammesForChannel,
   effectiveTvgId,
+  shiftChannelProgrammes,
+  displayedToUtcMs,
   EPG_LOADED_EVENT,
   EPG_OFFSET_EVENT,
 } from "@/scripts/lib/epg-data.js"
@@ -221,7 +223,7 @@ const view: TvView = {
       const progressFill = row.querySelector<HTMLElement>('[data-role="progress"]')
       const { current, next } =
         epgSource === "short-epg"
-          ? shortEpgNowNextSlot(shortEpgRowNowNext.get(String(channel.id)) ?? null)
+          ? shortEpgNowNextSlot(shortEpgRowNowNext.get(String(channel.id)) ?? null, state.playlistId)
           : computeNowNext(programmes, channel, state.playlistId)
       if (nowLine) nowLine.textContent = current?.title || ""
       if (nextLine) nextLine.textContent = next?.title || ""
@@ -292,8 +294,8 @@ const view: TvView = {
         {
           playlistId: state.playlistId,
           channel,
-          startUtcMs: rawStart,
-          stopUtcMs: rawStop,
+          startUtcMs: displayedToUtcMs(state.playlistId, rawStart),
+          stopUtcMs: displayedToUtcMs(state.playlistId, rawStop),
           catchupId: programme.catchupId ?? null,
           title: programme.title,
           logo: channel.logo ?? null,
@@ -336,7 +338,7 @@ const view: TvView = {
       void getProgrammesForChannel(state.playlistId, tvgId, todayWindow()).then((programmes) => {
         fetchingDayProgrammes.delete(tvgId)
         if (state.destroyed) return
-        rememberDayProgrammes(tvgId, programmes)
+        rememberDayProgrammes(tvgId, shiftChannelProgrammes(programmes, channel.tvgShift))
         if (state.guideChannel === channel) renderGuide(channel, false)
       })
     }
@@ -368,7 +370,7 @@ const view: TvView = {
       void shortEpgCache.getProgrammes(xtreamCreds, channel.id).then((rows) => {
         fetchingDayProgrammes.delete(key)
         if (state.destroyed) return
-        const mapped = rows ? programmesForDay(shortEpgToGuideProgrammes(rows), startOfToday()) : []
+        const mapped = rows ? programmesForDay(shortEpgToGuideProgrammes(rows, state.playlistId), startOfToday()) : []
         rememberDayProgrammes(key, mapped)
         if (state.guideChannel === channel) renderGuide(channel, false)
       })
@@ -402,7 +404,7 @@ const view: TvView = {
         return
       }
 
-      const dayProgrammes = epgState && tvgId ? epgState.programmes.get(tvgId) : undefined
+      const dayProgrammes = epgState && tvgId ? shiftChannelProgrammes(epgState.programmes.get(tvgId), channel.tvgShift) : undefined
       const rows = programmesForDay(dayProgrammes, startOfToday())
       paintGuide(channel, rows, nowNext, nowMs, !state.epgResolved, animate)
     }
@@ -741,9 +743,17 @@ const view: TvView = {
     }
 
     function onEpgOffsetChanged(event: Event): void {
-      if (epgSource === "short-epg") return
       const detail = (event as CustomEvent).detail
       if (!detail || detail.playlistId !== state.playlistId) return
+
+      if (epgSource === "short-epg") {
+        // Cached rows are raw provider UTC; a repaint re-maps them through the new offset.
+        dayProgrammesCache.clear()
+        channelRows?.forEachMountedRow((rowEl, channel) => paintChannelRow(rowEl, channel, null))
+        if (state.guideChannel) renderGuide(state.guideChannel, false)
+        return
+      }
+
       void resolvePlaylistCreds(state.playlistId).then((creds) => {
         if (!creds || state.destroyed) return
         return loadProgrammes(state.playlistId, creds, { force: true, window: epgLoadWindow(), epgMode }).then(() => {

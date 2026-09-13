@@ -131,7 +131,6 @@ import { openAddToCustomDialog } from "@/scripts/lib/add-to-custom-dialog.ts"
 import {
   loadProgrammes,
   getProgrammesSync,
-  getNowNext,
   getNowNextForChannel,
   shiftChannelProgrammes,
   effectiveTvgId,
@@ -369,8 +368,16 @@ document.addEventListener(EPG_LOADED_EVENT, (e) => {
 document.addEventListener(EPG_OFFSET_EVENT, (e) => {
   const detail = /** @type {CustomEvent} */ (e).detail
   if (!detail || detail.playlistId !== activePlaylistId) return
-  ensureEpgLoaded()
-  if (currentlyPlayingId) paintEpgSidePanel(currentlyPlayingId)
+  // The offset change already dropped the EPG memCache; repaint only once the reload settles.
+  const repaint = () => {
+    refreshNowSlots()
+    refreshDiscordPresenceProgramme()
+    if (currentlyPlayingId) paintEpgSidePanel(currentlyPlayingId)
+    if (radioModeChannelId != null) paintRadioNowPlaying(radioModeChannelId)
+  }
+  const reload = ensureEpgLoaded()
+  if (reload) reload.finally(repaint)
+  else repaint()
 })
 
 const videoScaleController = createVideoScaleController(() => (vjs ? vjs.el() : null), () => vjs)
@@ -1528,8 +1535,8 @@ function paintChannels(data, fromCache, age, isM3U = false) {
 }
 
 function ensureEpgLoaded() {
-  if (!activePlaylistId || !creds.host) return
-  loadProgrammes(activePlaylistId, creds).catch(() => {})
+  if (!activePlaylistId || !creds.host) return null
+  return loadProgrammes(activePlaylistId, creds).catch(() => {})
 }
 
 let autoplayConsumed = false
@@ -4694,13 +4701,10 @@ function retryCatchupSession(ctx, opts = {}) {
 /** Programme title under the playhead at `atUtcMs`, from XMLTV or the cached Xtream full table; "" when EPG data is missing. */
 function resolveProgrammeTitleAt(channel, atUtcMs) {
   if (!channel || !activePlaylistId) return ""
-  const tvgId = effectiveTvgId(channel, activePlaylistId)
-  if (tvgId) {
-    const state = getProgrammesSync(activePlaylistId)
-    const displayedAtMs = utcToDisplayedMs(activePlaylistId, atUtcMs)
-    const { current } = getNowNext(state?.programmes, tvgId, displayedAtMs)
-    if (current?.title) return current.title
-  }
+  const state = getProgrammesSync(activePlaylistId)
+  const displayedAtMs = utcToDisplayedMs(activePlaylistId, atUtcMs)
+  const { current } = getNowNextForChannel(state?.programmes, channel, activePlaylistId, displayedAtMs)
+  if (current?.title) return current.title
   const xtreamEntries = peekXtreamFullEpgCache(channel)
   const listing = xtreamEntries?.find((entry) => entry.startUtcMs <= atUtcMs && atUtcMs < entry.stopUtcMs)
   return listing?.title || ""
@@ -4709,27 +4713,22 @@ function resolveProgrammeTitleAt(channel, atUtcMs) {
 /** Programme `catchup-id` under the playhead at `atUtcMs`, or null when EPG data or the field is missing. */
 function resolveProgrammeCatchupIdAt(channel, atUtcMs) {
   if (!channel || !activePlaylistId) return null
-  const tvgId = effectiveTvgId(channel, activePlaylistId)
-  if (!tvgId) return null
   const state = getProgrammesSync(activePlaylistId)
   const displayedAtMs = utcToDisplayedMs(activePlaylistId, atUtcMs)
-  const { current } = getNowNext(state?.programmes, tvgId, displayedAtMs)
+  const { current } = getNowNextForChannel(state?.programmes, channel, activePlaylistId, displayedAtMs)
   return current?.catchupId || null
 }
 
-/** Programme window under the playhead at `atUtcMs`, from XMLTV or the cached Xtream full table; null when EPG data is missing. */
+/** Programme window at atUtcMs, from XMLTV (raw) or the cached Xtream full table; null when missing. */
 function resolveProgrammeWindowAt(channel, atUtcMs) {
   if (!channel || !activePlaylistId) return null
-  const tvgId = effectiveTvgId(channel, activePlaylistId)
-  if (tvgId) {
-    const state = getProgrammesSync(activePlaylistId)
-    const displayedAtMs = utcToDisplayedMs(activePlaylistId, atUtcMs)
-    const { current } = getNowNext(state?.programmes, tvgId, displayedAtMs)
-    if (current) {
-      return {
-        startUtcMs: displayedToUtcMs(activePlaylistId, current.start),
-        stopUtcMs: displayedToUtcMs(activePlaylistId, current.stop),
-      }
+  const state = getProgrammesSync(activePlaylistId)
+  const displayedAtMs = utcToDisplayedMs(activePlaylistId, atUtcMs)
+  const { current } = getNowNextForChannel(state?.programmes, channel, activePlaylistId, displayedAtMs)
+  if (current) {
+    return {
+      startUtcMs: displayedToUtcMs(activePlaylistId, current.rawStart ?? current.start),
+      stopUtcMs: displayedToUtcMs(activePlaylistId, current.rawStop ?? current.stop),
     }
   }
   const xtreamEntries = peekXtreamFullEpgCache(channel)
@@ -5468,93 +5467,7 @@ function isEpgEntryPlaying(entryStartMs, entryStopMs, isLive, timesAreDisplayed)
   return isLive && currentlyPlayingId === epgListChannelId
 }
 
-async function loadEPG(streamId) {
-  if (!epgList) return
-  epgList.innerHTML = `<div class="text-fg-3">Loading EPG…</div>`
-  epgListData = []
-  if (epgDayIndicator) epgDayIndicator.textContent = ""
-  epgListChannelId = streamId
-  epgListChannelName = all.find((c) => c.id === streamId)?.name || ""
-  try {
-    const r = await xtreamApiFetch("get_short_epg", {
-      stream_id: String(streamId),
-      limit: "10",
-    })
-    if (!r.ok) throw new Error(await r.text())
-    const data = await r.json()
-
-    const items = Array.isArray(data?.epg_listings)
-      ? data.epg_listings
-      : Array.isArray(data)
-      ? data
-      : []
-    if (!items.length) {
-      epgList.innerHTML = `<div class="text-fg-3">No EPG available.</div>`
-      if (epgDayIndicator) epgDayIndicator.textContent = ""
-      return
-    }
-
-    const now = Date.now()
-    epgListData = items
-      .map((it) => ({
-        start: utcToDisplayedMs(activePlaylistId, Number(it.start_timestamp || it.start) * 1000),
-        stop: utcToDisplayedMs(activePlaylistId, Number(it.stop_timestamp || it.end) * 1000),
-        title: maybeB64ToUtf8(it.title || it.title_raw || t("programme.untitled")),
-        desc: maybeB64ToUtf8(it.description || it.description_raw || ""),
-      }))
-      .filter((p) => Number.isFinite(p.start) && Number.isFinite(p.stop) && p.stop > p.start)
-
-    let previousDayKey = epgDayKey(now)
-    epgList.innerHTML = epgListData
-      .map((p, idx) => {
-        const isLive = p.start <= now && now < p.stop
-        const isPlaying = isEpgEntryPlaying(p.start, p.stop, isLive, true)
-        const start = fmtTime(p.start / 1000)
-        const end = fmtTime(p.stop / 1000)
-        const title = escapeHtml(p.title)
-        const desc = escapeHtml(p.desc)
-        const dayKey = epgDayKey(p.start)
-        const daySeparator = dayKey !== previousDayKey ? renderEpgDaySeparator(p.start) : ""
-        previousDayKey = dayKey
-        const rowClass = isPlaying
-          ? "bg-accent-soft ring-1 ring-accent/30 hover:bg-accent/20"
-          : isLive
-          ? "bg-surface-2 hover:bg-surface-3 ring-1 ring-accent/30"
-          : "bg-surface-2 hover:bg-surface-3"
-        const dot = isLive
-          ? '<span class="size-1.5 rounded-full bg-accent shrink-0" aria-hidden="true"></span>'
-          : ""
-        return `
-          ${daySeparator}
-          <button type="button" data-epg-idx="${idx}"${isPlaying ? ' data-now-playing="true" aria-current="true"' : ""}
-            class="epg-entry block w-full min-h-11 text-left rounded-lg px-3 py-2 outline-none transition-colors
-                   ${rowClass}
-                   focus-visible:ring-1 focus-visible:ring-accent">
-            <div class="flex items-center justify-between gap-2">
-              <div class="flex items-center gap-2 min-w-0">
-                ${dot}
-                <div class="font-medium text-fg truncate">${title}</div>
-              </div>
-              <div class="text-xs text-fg-3 tabular-nums shrink-0">${start}–${end}</div>
-            </div>
-            ${desc ? `<div class="mt-1 text-sm text-fg-2 leading-relaxed line-clamp-3">${desc}</div>` : ""}
-          </button>`
-      })
-      .join("")
-    updateEpgDayIndicator()
-  } catch (e) {
-    // A channel switch aborts this fetch mid-body; that's expected, not a failure to report.
-    if (epgListChannelId !== streamId) {
-      log.warn("[xt:livetv] short-EPG fetch superseded by a newer channel", { streamId, error: e })
-      return
-    }
-    log.error("[xt:livetv] short-EPG fetch failed", { streamId, error: e })
-    epgList.innerHTML = `<div class="text-bad">Failed to load EPG.</div>`
-    if (epgDayIndicator) epgDayIndicator.textContent = ""
-  }
-}
-
-/** Splits a sorted programme array into the upcoming slice (sized by `upcomingPages`, "Load later" pages grow it), a past slice sized by `pastPages` (page 1 shows the 8 most recent, "Load earlier" pages grow the window), and whether more upcoming programmes remain beyond the slice. */
+/** Splits programmes into a past slice, an upcoming slice, and whether more upcoming remain, paged by pastPages/upcomingPages. */
 function computeEpgSidePanelWindow(programmes, pastPages, supportsCatchup, upcomingPages) {
   const now = Date.now()
   const upcomingAll = programmes.filter((programme) => programme.stop >= now)
@@ -5589,7 +5502,12 @@ function renderEpgSidePanelRows(past, upcoming, { timesAreDisplayed, canLoadEarl
   const rowsHtml = combined
     .map((programme, idx) => {
       const isLive = programme.start <= now && now < programme.stop
-      const isPlaying = isEpgEntryPlaying(programme.start, programme.stop, isLive, timesAreDisplayed)
+      const isPlaying = isEpgEntryPlaying(
+        programme.rawStart ?? programme.start,
+        programme.rawStop ?? programme.stop,
+        isLive,
+        timesAreDisplayed,
+      )
       if (isPlaying) playingIndex = idx
       if (isLive) liveIndex = idx
       const isPast = programme.stop <= now
@@ -5648,7 +5566,7 @@ function renderEpgSidePanelRows(past, upcoming, { timesAreDisplayed, canLoadEarl
   updateEpgDayIndicator()
 }
 
-/** M3U variant of loadEPG: renders the channel's XMLTV programmes (via effective tvg-id) through the shared renderer. */
+/** M3U side panel: renders the channel's XMLTV programmes (via effective tvg-id) through the shared renderer. */
 function paintSidePanelFromXmltv(streamId) {
   if (!epgList) return
   const channel = all.find((entry) => entry.id === streamId)
@@ -5749,13 +5667,13 @@ async function fetchXtreamFullEpgAction(action, streamId) {
 
 /** Fresh cached full-table entries (raw provider UTC), or null (used to skip the loading placeholder on remount repaints). */
 function peekXtreamFullEpgCache(channel) {
-  const cached = xtreamFullEpgCache.get(`${activePlaylistId}:${channel.id}`)
+  const cached = xtreamFullEpgCache.get(`${activePlaylistId}:${channel.id}:${catchupWindowDays(channel)}`)
   return cached && Date.now() - cached.at < XTREAM_FULL_EPG_CACHE_TTL_MS ? cached.entries : null
 }
 
 /** Full-table Xtream EPG (`get_simple_date_table`, falling back to the `get_simple_data_table` spelling), windowed and cached per playlist+channel. Cached entries stay in raw provider UTC so an offset change can re-render without a refetch. */
 async function fetchXtreamFullEpg(channel) {
-  const cacheKey = `${activePlaylistId}:${channel.id}`
+  const cacheKey = `${activePlaylistId}:${channel.id}:${catchupWindowDays(channel)}`
   const cached = xtreamFullEpgCache.get(cacheKey)
   if (cached && Date.now() - cached.at < XTREAM_FULL_EPG_CACHE_TTL_MS) return cached.entries
   try {
@@ -5801,25 +5719,30 @@ function xtreamChannelXmltvProgrammes(channel) {
   return shiftChannelProgrammes(state?.programmes?.get(tvgId) || [], channel.tvgShift)
 }
 
-/** Merges the Xtream full-table programmes with XMLTV programmes for the same channel into one sorted list, deduplicating entries whose start times land within 60s of each other. Full-table entries win on a duplicate since they carry hasArchive. */
+/** Merges full-table and XMLTV programmes; XMLTV gap-fill rows inside the table's covered span are marked non-archived. */
 function mergeSidePanelProgrammes(fullTableProgrammes, xmltvProgrammes) {
   const DEDUPE_WINDOW_MS = 60 * 1000
   const merged = [...fullTableProgrammes]
+  const tableStart = fullTableProgrammes.length ? Math.min(...fullTableProgrammes.map((programme) => programme.start)) : null
+  const tableEnd = fullTableProgrammes.length ? Math.max(...fullTableProgrammes.map((programme) => programme.stop)) : null
   for (const xmltvProgramme of xmltvProgrammes) {
+    const xmltvStart = xmltvProgramme.rawStart ?? xmltvProgramme.start
     const isDuplicate = fullTableProgrammes.some(
-      (fullTableProgramme) => Math.abs(fullTableProgramme.start - xmltvProgramme.start) <= DEDUPE_WINDOW_MS,
+      (fullTableProgramme) => Math.abs(fullTableProgramme.start - xmltvStart) <= DEDUPE_WINDOW_MS,
     )
-    if (!isDuplicate) merged.push(xmltvProgramme)
+    if (isDuplicate) continue
+    const withinTableSpan = tableStart !== null && xmltvStart >= tableStart && xmltvStart <= tableEnd
+    merged.push(withinTableSpan ? { ...xmltvProgramme, hasArchive: false } : xmltvProgramme)
   }
   return merged.sort((a, b) => a.start - b.start)
 }
 
-/** Renders the side panel for an Xtream channel from the merge of full-table + XMLTV programmes; falls back to loadEPG's short list only when both sources are empty. */
+/** Renders the merged table + XMLTV panel; false when it fell back to the short-EPG path. */
 function renderXtreamEpgEntries(channel, fullTableProgrammes, isNewChannelPaint) {
   const mergedProgrammes = mergeSidePanelProgrammes(fullTableProgrammes, xtreamChannelXmltvProgrammes(channel))
   if (!mergedProgrammes.length) {
-    loadEPG(channel.id)
-    return
+    void paintSidePanelFromShortEpg(channel.id, channel, isNewChannelPaint)
+    return false
   }
   const { past, upcoming, hasMoreUpcoming } = computeEpgSidePanelWindow(
     mergedProgrammes,
@@ -5835,9 +5758,10 @@ function renderXtreamEpgEntries(channel, fullTableProgrammes, isNewChannelPaint)
     canLoadLater: hasMoreUpcoming,
     isNewChannelPaint,
   })
+  return true
 }
 
-/** Xtream variant of paintSidePanelFromXmltv: fetches the full EPG table for catch-up-capable channels, merges it with XMLTV programmes, and falls back to loadEPG's short list when both are unavailable. */
+/** Xtream full-table panel for catch-up channels, merged with XMLTV; falls back to short EPG when empty. */
 async function paintSidePanelFromXtreamEpg(streamId, channel) {
   if (!epgList) return
   const isNewChannelPaint = streamId !== epgListChannelId
@@ -5845,11 +5769,13 @@ async function paintSidePanelFromXtreamEpg(streamId, channel) {
     epgSidePanelPastPages = 1
     epgSidePanelUpcomingPages = 1
   }
+  // Keep visible rows instead of flashing the placeholder.
+  const hasRowsAlready = !isNewChannelPaint && epgListData.length > 0
   epgListChannelId = streamId
   epgListChannelName = channel.name || ""
-  epgListData = []
   // Remount repaints (seek, auto-advance) hit the cache; blanking to a placeholder there just flashes the panel.
-  if (!peekXtreamFullEpgCache(channel)) {
+  if (!peekXtreamFullEpgCache(channel) && !hasRowsAlready) {
+    epgListData = []
     epgList.innerHTML = `<div class="text-fg-3">${escapeHtml(t("epg.loading"))}</div>`
     if (epgDayIndicator) epgDayIndicator.textContent = ""
   }
@@ -5857,8 +5783,78 @@ async function paintSidePanelFromXtreamEpg(streamId, channel) {
   const listings = await fetchXtreamFullEpg(channel)
   // A different channel has since taken over the panel while the fetch was in flight.
   if (epgListChannelId !== streamId) return
-  // renderXtreamEpgEntries merges in XMLTV programmes and falls back to loadEPG only when both sources are empty.
   renderXtreamEpgEntries(channel, listings ? xtreamListingsToProgrammes(listings) : [], isNewChannelPaint)
+}
+
+/** Short-EPG panel merged with XMLTV; non-catch-up channels and the empty-merge fallback. */
+async function paintSidePanelFromShortEpg(streamId, channel, forcedIsNewChannelPaint) {
+  if (!epgList) return
+  const isNewChannelPaint = forcedIsNewChannelPaint ?? streamId !== epgListChannelId
+  if (isNewChannelPaint) {
+    epgSidePanelPastPages = 1
+    epgSidePanelUpcomingPages = 1
+  }
+  epgListChannelId = streamId
+  epgListChannelName = channel.name || ""
+  // Keep visible rows instead of flashing the placeholder.
+  const hasRowsAlready = !isNewChannelPaint && epgListData.length > 0
+  if (!hasRowsAlready) {
+    epgList.innerHTML = `<div class="text-fg-3">${escapeHtml(t("epg.loading"))}</div>`
+    if (epgDayIndicator) epgDayIndicator.textContent = ""
+  }
+
+  let shortProgrammes
+  try {
+    const response = await xtreamApiFetch("get_short_epg", { stream_id: String(streamId), limit: "10" })
+    if (!response.ok) throw new Error(await response.text())
+    const data = await response.json()
+    const items = Array.isArray(data?.epg_listings) ? data.epg_listings : Array.isArray(data) ? data : []
+    shortProgrammes = items
+      .map((item) => ({
+        start: utcToDisplayedMs(activePlaylistId, Number(item.start_timestamp || item.start) * 1000),
+        stop: utcToDisplayedMs(activePlaylistId, Number(item.stop_timestamp || item.end) * 1000),
+        title: maybeB64ToUtf8(item.title || item.title_raw || t("programme.untitled")),
+        desc: maybeB64ToUtf8(item.description || item.description_raw || ""),
+      }))
+      .filter((programme) => Number.isFinite(programme.start) && Number.isFinite(programme.stop) && programme.stop > programme.start)
+  } catch (err) {
+    // A channel switch aborts this fetch mid-body; that's expected, not a failure to report.
+    if (epgListChannelId !== streamId) {
+      log.warn("[xt:livetv] short-EPG fetch superseded by a newer channel", { streamId, error: err })
+      return
+    }
+    log.error("[xt:livetv] short-EPG fetch failed", { streamId, error: err })
+    epgList.innerHTML = `<div class="text-bad">${escapeHtml(t("epg.sidePanelEmpty"))}</div>`
+    epgListData = []
+    if (epgDayIndicator) epgDayIndicator.textContent = ""
+    return
+  }
+  // A different channel has since taken over the panel while the fetch was in flight.
+  if (epgListChannelId !== streamId) return
+
+  const merged = mergeSidePanelProgrammes(shortProgrammes, xtreamChannelXmltvProgrammes(channel))
+  if (!merged.length) {
+    epgList.innerHTML = `<div class="text-fg-3" data-i18n="epg.sidePanelEmpty">${escapeHtml(t("epg.sidePanelEmpty"))}</div>`
+    epgListData = []
+    if (epgDayIndicator) epgDayIndicator.textContent = ""
+    return
+  }
+
+  const supportsCatchup = channelSupportsCatchup(channel)
+  const { past, upcoming, hasMoreUpcoming } = computeEpgSidePanelWindow(
+    merged,
+    epgSidePanelPastPages,
+    supportsCatchup,
+    epgSidePanelUpcomingPages,
+  )
+  const maxPastPages = Math.min(catchupWindowDays(channel), EPG_SIDE_PANEL_MAX_PAST_DAYS)
+  const canLoadEarlier = supportsCatchup && epgSidePanelPastPages < maxPastPages
+  renderEpgSidePanelRows(past, upcoming, {
+    timesAreDisplayed: true,
+    canLoadEarlier,
+    canLoadLater: hasMoreUpcoming,
+    isNewChannelPaint,
+  })
 }
 
 /** Side-panel EPG router: XMLTV for M3U channels, full table for catch-up-capable Xtream channels, short EPG otherwise. */
@@ -5868,11 +5864,19 @@ function paintEpgSidePanel(streamId) {
     return
   }
   const channel = all.find((entry) => entry.id === streamId)
-  if (channel && channelSupportsCatchup(channel)) {
+  if (!channel) {
+    epgListChannelId = streamId
+    epgListChannelName = ""
+    epgListData = []
+    if (epgList) epgList.innerHTML = `<div class="text-fg-3" data-i18n="epg.sidePanelEmpty">${escapeHtml(t("epg.sidePanelEmpty"))}</div>`
+    if (epgDayIndicator) epgDayIndicator.textContent = ""
+    return
+  }
+  if (channelSupportsCatchup(channel)) {
     void paintSidePanelFromXtreamEpg(streamId, channel)
     return
   }
-  loadEPG(streamId)
+  void paintSidePanelFromShortEpg(streamId, channel)
 }
 
 /** Loads one more day of past programmes into the side panel, re-rendering while preserving scroll position. */
@@ -5886,8 +5890,10 @@ function extendSidePanelPastWindow() {
 
   const isM3uPanel = hasDirectUrl(streamId)
   const cachedXtreamEntries = isM3uPanel ? null : peekXtreamFullEpgCache(channel)
-  // No fresh cache to extend from: refetch instead of consuming a page on a no-op.
+  const previousPastPages = epgSidePanelPastPages
+  // No fresh cache to extend from: refetch instead of redrawing the same window, still consuming a page.
   if (!isM3uPanel && !cachedXtreamEntries) {
+    epgSidePanelPastPages = Math.min(epgSidePanelPastPages + 1, maxPastPages)
     void paintSidePanelFromXtreamEpg(streamId, channel)
     return
   }
@@ -5897,10 +5903,17 @@ function extendSidePanelPastWindow() {
   epgSidePanelPastPages = Math.min(epgSidePanelPastPages + 1, maxPastPages)
   const previousScrollHeight = epgPanel?.scrollHeight ?? 0
   const previousScrollTop = epgPanel?.scrollTop ?? 0
+  let rendered = true
   if (isM3uPanel) {
     paintSidePanelFromXmltv(streamId)
   } else {
-    renderXtreamEpgEntries(channel, xtreamListingsToProgrammes(cachedXtreamEntries), false)
+    rendered = renderXtreamEpgEntries(channel, xtreamListingsToProgrammes(cachedXtreamEntries), false)
+  }
+  if (!rendered) {
+    // Fell back to the short-EPG path, which paints itself.
+    epgSidePanelPastPages = previousPastPages
+    epgSidePanelExtending = false
+    return
   }
   if (epgPanel) epgPanel.scrollTop = previousScrollTop + (epgPanel.scrollHeight - previousScrollHeight)
   if (focusWasInList) {
@@ -5910,7 +5923,7 @@ function extendSidePanelPastWindow() {
   epgSidePanelExtending = false
 }
 
-/** Loads one more page of upcoming programmes into the side panel, re-rendering while keeping scroll position (new rows land below the fold). Works for both the M3U (XMLTV) and Xtream side panels. */
+/** Adds one page of upcoming rows below the fold, keeping scroll position. */
 function extendSidePanelUpcomingWindow() {
   if (epgSidePanelExtending) return
   const streamId = epgListChannelId
@@ -5918,10 +5931,19 @@ function extendSidePanelUpcomingWindow() {
   if (!channel) return
 
   const isM3uPanel = hasDirectUrl(streamId)
-  const cachedXtreamEntries = isM3uPanel ? null : peekXtreamFullEpgCache(channel)
-  // No fresh cache to extend from: refetch instead of consuming a page on a no-op.
-  if (!isM3uPanel && !cachedXtreamEntries) {
+  const isCatchupCapable = !isM3uPanel && channelSupportsCatchup(channel)
+  const cachedXtreamEntries = isCatchupCapable ? peekXtreamFullEpgCache(channel) : null
+
+  // No fresh cache to extend from: refetch instead of redrawing the same window, still consuming a page.
+  if (isCatchupCapable && !cachedXtreamEntries) {
+    epgSidePanelUpcomingPages += 1
     void paintSidePanelFromXtreamEpg(streamId, channel)
+    return
+  }
+  // No full table for non-catch-up channels.
+  if (!isM3uPanel && !isCatchupCapable) {
+    epgSidePanelUpcomingPages += 1
+    void paintSidePanelFromShortEpg(streamId, channel, false)
     return
   }
 
@@ -5930,10 +5952,17 @@ function extendSidePanelUpcomingWindow() {
   const previousCombinedLength = epgListData.length
   epgSidePanelUpcomingPages += 1
   const previousScrollTop = epgPanel?.scrollTop ?? 0
+  let rendered = true
   if (isM3uPanel) {
     paintSidePanelFromXmltv(streamId)
   } else {
-    renderXtreamEpgEntries(channel, xtreamListingsToProgrammes(cachedXtreamEntries), false)
+    rendered = renderXtreamEpgEntries(channel, xtreamListingsToProgrammes(cachedXtreamEntries), false)
+  }
+  if (!rendered) {
+    // Fell back to the short-EPG path, which paints itself.
+    epgSidePanelUpcomingPages -= 1
+    epgSidePanelExtending = false
+    return
   }
   if (epgPanel) epgPanel.scrollTop = previousScrollTop
   if (focusWasInList) {
@@ -5973,13 +6002,13 @@ epgList?.addEventListener("click", async (e) => {
   let onCatchup
   let onWatchFromStart
   if (channel && channelSupportsCatchup(channel)) {
-    if (isEnded && archiveKnownPlayable && isCatchupPlayable(channel, startUtcMs, now)) {
+    if (isEnded && archiveKnownPlayable && isCatchupPlayable(channel, entry.rawStart ?? entry.start, now)) {
       onCatchup = () => {
         void playCatchup(channel, { startUtcMs, stopUtcMs, title: entry.title, catchupId: entry.catchupId })
       }
     }
     // has_archive is 0 while a programme is still airing, so it must not gate "Watch from start".
-    if (isLive && isCatchupPlayable(channel, startUtcMs, now)) {
+    if (isLive && isCatchupPlayable(channel, entry.rawStart ?? entry.start, now)) {
       onWatchFromStart = () => {
         void playCatchup(channel, { startUtcMs, stopUtcMs, title: entry.title, seekSeconds: 0, catchupId: entry.catchupId })
       }
