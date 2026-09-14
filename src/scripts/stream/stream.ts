@@ -5467,23 +5467,23 @@ function isEpgEntryPlaying(entryStartMs, entryStopMs, isLive, timesAreDisplayed)
   return isLive && currentlyPlayingId === epgListChannelId
 }
 
-/** Splits programmes into a past slice, an upcoming slice, and whether more upcoming remain, paged by pastPages/upcomingPages. */
-function computeEpgSidePanelWindow(programmes, pastPages, supportsCatchup, upcomingPages) {
+/** Splits programmes into a past slice, an upcoming slice, and whether more past/upcoming remain, paged by pastPages/upcomingPages. */
+function computeEpgSidePanelWindow(programmes, pastPages, upcomingPages) {
   const now = Date.now()
   const upcomingAll = programmes.filter((programme) => programme.stop >= now)
   const upcomingLimit = upcomingPages * EPG_SIDE_PANEL_UPCOMING_PAGE_SIZE
   const upcoming = upcomingAll.slice(0, upcomingLimit)
   const hasMoreUpcoming = upcomingAll.length > upcomingLimit
   const pastWindowMs = pastPages * EPG_SIDE_PANEL_PAST_WINDOW_MS
-  const pastWithinWindow = supportsCatchup
-    ? programmes.filter((programme) => programme.stop < now && now - programme.stop <= pastWindowMs)
-    : []
+  const pastAll = programmes.filter((programme) => programme.stop < now)
+  const pastWithinWindow = pastAll.filter((programme) => now - programme.stop <= pastWindowMs)
   const past = pastPages > 1 ? pastWithinWindow : pastWithinWindow.slice(-8)
-  return { past, upcoming, hasMoreUpcoming }
+  const hasMorePast = pastAll.length > past.length
+  return { past, upcoming, hasMoreUpcoming, hasMorePast }
 }
 
 /** Shared side-panel renderer for past + upcoming rows; timesAreDisplayed marks entry times as display-shifted rather than raw provider UTC. */
-function renderEpgSidePanelRows(past, upcoming, { timesAreDisplayed, canLoadEarlier, canLoadLater, isNewChannelPaint }) {
+function renderEpgSidePanelRows(past, upcoming, { timesAreDisplayed, canLoadEarlier, canLoadLater, isNewChannelPaint, channel }) {
   const combined = [...past, ...upcoming]
   epgListData = combined
   const now = Date.now()
@@ -5517,7 +5517,13 @@ function renderEpgSidePanelRows(past, upcoming, { timesAreDisplayed, canLoadEarl
       const desc = escapeHtml(programme.desc)
       // has_archive narrows the badge/playability when the provider sends it; missing/null means "trust the channel-level catch-up window".
       const archiveKnownPlayable = programme.hasArchive == null ? true : programme.hasArchive
-      const replayBadge = isPast && archiveKnownPlayable
+      const canReplay =
+        isPast &&
+        archiveKnownPlayable &&
+        channel != null &&
+        channelSupportsCatchup(channel) &&
+        isCatchupPlayable(channel, programme.rawStart ?? programme.start, now)
+      const replayBadge = canReplay
         ? `<span class="inline-flex shrink-0 items-center rounded-md border border-line bg-surface-2 px-1.5 text-2xs font-medium text-fg-3">${escapeHtml(t("catchup.badge"))}</span>`
         : ""
       const dayKey = epgDayKey(programme.start)
@@ -5601,11 +5607,9 @@ function paintSidePanelFromXmltv(streamId) {
     return
   }
 
-  const supportsCatchup = channelSupportsCatchup(channel)
-  const { past, upcoming, hasMoreUpcoming } = computeEpgSidePanelWindow(
+  const { past, upcoming, hasMoreUpcoming, hasMorePast } = computeEpgSidePanelWindow(
     programmes,
     epgSidePanelPastPages,
-    supportsCatchup,
     epgSidePanelUpcomingPages,
   )
   if (!past.length && !upcoming.length) {
@@ -5615,13 +5619,13 @@ function paintSidePanelFromXmltv(streamId) {
     return
   }
 
-  const maxPastPages = Math.min(catchupWindowDays(channel), EPG_SIDE_PANEL_MAX_PAST_DAYS)
-  const canLoadEarlier = supportsCatchup && epgSidePanelPastPages < maxPastPages
+  const canLoadEarlier = hasMorePast && epgSidePanelPastPages < EPG_SIDE_PANEL_MAX_PAST_DAYS
   renderEpgSidePanelRows(past, upcoming, {
     timesAreDisplayed: true,
     canLoadEarlier,
     canLoadLater: hasMoreUpcoming,
     isNewChannelPaint,
+    channel,
   })
 }
 
@@ -5667,13 +5671,13 @@ async function fetchXtreamFullEpgAction(action, streamId) {
 
 /** Fresh cached full-table entries (raw provider UTC), or null (used to skip the loading placeholder on remount repaints). */
 function peekXtreamFullEpgCache(channel) {
-  const cached = xtreamFullEpgCache.get(`${activePlaylistId}:${channel.id}:${catchupWindowDays(channel)}`)
+  const cached = xtreamFullEpgCache.get(`${activePlaylistId}:${channel.id}`)
   return cached && Date.now() - cached.at < XTREAM_FULL_EPG_CACHE_TTL_MS ? cached.entries : null
 }
 
 /** Full-table Xtream EPG (`get_simple_date_table`, falling back to the `get_simple_data_table` spelling), windowed and cached per playlist+channel. Cached entries stay in raw provider UTC so an offset change can re-render without a refetch. */
 async function fetchXtreamFullEpg(channel) {
-  const cacheKey = `${activePlaylistId}:${channel.id}:${catchupWindowDays(channel)}`
+  const cacheKey = `${activePlaylistId}:${channel.id}`
   const cached = xtreamFullEpgCache.get(cacheKey)
   if (cached && Date.now() - cached.at < XTREAM_FULL_EPG_CACHE_TTL_MS) return cached.entries
   try {
@@ -5683,8 +5687,8 @@ async function fetchXtreamFullEpg(channel) {
     if (!listings) return null
     const normalized = normalizeXtreamFullEpgListings(listings)
     const now = Date.now()
-    // Bounds shifted into raw provider space to match the cached entries.
-    const windowStartMs = displayedToUtcMs(activePlaylistId, now - catchupWindowDays(channel) * 24 * 60 * 60 * 1000)
+    // Bounds shifted into raw provider space to match the cached entries; badges narrow real playability separately.
+    const windowStartMs = displayedToUtcMs(activePlaylistId, now - EPG_SIDE_PANEL_MAX_PAST_DAYS * 24 * 60 * 60 * 1000)
     const windowEndMs = displayedToUtcMs(activePlaylistId, now + 36 * 60 * 60 * 1000)
     const windowed = normalized.filter(
       (entry) => entry.startUtcMs >= windowStartMs && entry.startUtcMs <= windowEndMs
@@ -5744,19 +5748,18 @@ function renderXtreamEpgEntries(channel, fullTableProgrammes, isNewChannelPaint)
     void paintSidePanelFromShortEpg(channel.id, channel, isNewChannelPaint)
     return false
   }
-  const { past, upcoming, hasMoreUpcoming } = computeEpgSidePanelWindow(
+  const { past, upcoming, hasMoreUpcoming, hasMorePast } = computeEpgSidePanelWindow(
     mergedProgrammes,
     epgSidePanelPastPages,
-    true,
     epgSidePanelUpcomingPages,
   )
-  const maxPastPages = Math.min(catchupWindowDays(channel), EPG_SIDE_PANEL_MAX_PAST_DAYS)
-  const canLoadEarlier = epgSidePanelPastPages < maxPastPages
+  const canLoadEarlier = hasMorePast && epgSidePanelPastPages < EPG_SIDE_PANEL_MAX_PAST_DAYS
   renderEpgSidePanelRows(past, upcoming, {
     timesAreDisplayed: true,
     canLoadEarlier,
     canLoadLater: hasMoreUpcoming,
     isNewChannelPaint,
+    channel,
   })
   return true
 }
@@ -5840,20 +5843,18 @@ async function paintSidePanelFromShortEpg(streamId, channel, forcedIsNewChannelP
     return
   }
 
-  const supportsCatchup = channelSupportsCatchup(channel)
-  const { past, upcoming, hasMoreUpcoming } = computeEpgSidePanelWindow(
+  const { past, upcoming, hasMoreUpcoming, hasMorePast } = computeEpgSidePanelWindow(
     merged,
     epgSidePanelPastPages,
-    supportsCatchup,
     epgSidePanelUpcomingPages,
   )
-  const maxPastPages = Math.min(catchupWindowDays(channel), EPG_SIDE_PANEL_MAX_PAST_DAYS)
-  const canLoadEarlier = supportsCatchup && epgSidePanelPastPages < maxPastPages
+  const canLoadEarlier = hasMorePast && epgSidePanelPastPages < EPG_SIDE_PANEL_MAX_PAST_DAYS
   renderEpgSidePanelRows(past, upcoming, {
     timesAreDisplayed: true,
     canLoadEarlier,
     canLoadLater: hasMoreUpcoming,
     isNewChannelPaint,
+    channel,
   })
 }
 
@@ -5884,23 +5885,30 @@ function extendSidePanelPastWindow() {
   if (epgSidePanelExtending) return
   const streamId = epgListChannelId
   const channel = all.find((entry) => entry.id === streamId)
-  if (!channel || !channelSupportsCatchup(channel)) return
-  const maxPastPages = Math.min(catchupWindowDays(channel), EPG_SIDE_PANEL_MAX_PAST_DAYS)
-  if (epgSidePanelPastPages >= maxPastPages) return
+  if (!channel) return
+  if (epgSidePanelPastPages >= EPG_SIDE_PANEL_MAX_PAST_DAYS) return
 
   const isM3uPanel = hasDirectUrl(streamId)
-  const cachedXtreamEntries = isM3uPanel ? null : peekXtreamFullEpgCache(channel)
+  const isCatchupCapable = !isM3uPanel && channelSupportsCatchup(channel)
+  const cachedXtreamEntries = isCatchupCapable ? peekXtreamFullEpgCache(channel) : null
   const previousPastPages = epgSidePanelPastPages
+
   // No fresh cache to extend from: refetch instead of redrawing the same window, still consuming a page.
-  if (!isM3uPanel && !cachedXtreamEntries) {
-    epgSidePanelPastPages = Math.min(epgSidePanelPastPages + 1, maxPastPages)
+  if (isCatchupCapable && !cachedXtreamEntries) {
+    epgSidePanelPastPages = Math.min(epgSidePanelPastPages + 1, EPG_SIDE_PANEL_MAX_PAST_DAYS)
     void paintSidePanelFromXtreamEpg(streamId, channel)
+    return
+  }
+  // No full table for non-catch-up channels.
+  if (!isM3uPanel && !isCatchupCapable) {
+    epgSidePanelPastPages = Math.min(epgSidePanelPastPages + 1, EPG_SIDE_PANEL_MAX_PAST_DAYS)
+    void paintSidePanelFromShortEpg(streamId, channel, false)
     return
   }
 
   epgSidePanelExtending = true
   const focusWasInList = !!epgList && epgList.contains(document.activeElement)
-  epgSidePanelPastPages = Math.min(epgSidePanelPastPages + 1, maxPastPages)
+  epgSidePanelPastPages = Math.min(epgSidePanelPastPages + 1, EPG_SIDE_PANEL_MAX_PAST_DAYS)
   const previousScrollHeight = epgPanel?.scrollHeight ?? 0
   const previousScrollTop = epgPanel?.scrollTop ?? 0
   let rendered = true
