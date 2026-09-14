@@ -7,8 +7,11 @@ import { ICON_X } from "@/scripts/lib/icons.js"
 
 export interface ActionSheetItem {
   label: string
-  onSelect: () => void
+  /** Omitted for a header row (see `header`). */
+  onSelect?: () => void
   destructive?: boolean
+  /** Non-interactive section label, rendered in place instead of a button. */
+  header?: boolean
 }
 
 export interface ActionSheetFact {
@@ -24,6 +27,10 @@ export interface ActionSheetOpenOptions {
 export interface ActionSheetHandle {
   open(title: string, actions: ActionSheetItem[], opts?: ActionSheetOpenOptions): void
   destroy(): void
+  isOpen(): boolean
+  /** Fires on the dialog's native "close" event; returns an unsubscribe function. */
+  onClose(listener: () => void): () => void
+  close(): void
 }
 
 export function createActionSheet(dialogId: string): ActionSheetHandle {
@@ -92,6 +99,13 @@ export function createActionSheet(dialogId: string): ActionSheetHandle {
     if (actionsEl) {
       actionsEl.replaceChildren()
       for (const action of actions) {
+        if (action.header) {
+          const headerEl = document.createElement("div")
+          headerEl.className = "px-3 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-fg-3 first:pt-1"
+          headerEl.textContent = action.label
+          actionsEl.appendChild(headerEl)
+          continue
+        }
         const button = document.createElement("button")
         button.type = "button"
         const isDestructive = Boolean(action.destructive)
@@ -102,22 +116,37 @@ export function createActionSheet(dialogId: string): ActionSheetHandle {
         button.textContent = action.label
         button.addEventListener("click", () => {
           el.close()
-          action.onSelect()
+          action.onSelect?.()
         })
         actionsEl.appendChild(button)
       }
     }
-    if (typeof el.showModal === "function") el.showModal()
+    // A re-render of an open sheet must not reopen the modal.
+    if (typeof el.showModal === "function" && !el.open) el.showModal()
     actionsEl?.querySelector<HTMLButtonElement>("button")?.focus()
   }
 
-  function destroy(): void {
+  function isOpen(): boolean {
+    return !!dialog?.open
+  }
+
+  function onClose(listener: () => void): () => void {
+    const el = ensureDialog()
+    el.addEventListener("close", listener)
+    return () => el.removeEventListener("close", listener)
+  }
+
+  function close(): void {
     try {
       dialog?.close()
     } catch {}
+  }
+
+  function destroy(): void {
+    close()
     dialog?.remove()
     dialog = null
   }
 
-  return { open, destroy }
+  return { open, destroy, isOpen, onClose, close }
 }

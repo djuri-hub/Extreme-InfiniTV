@@ -14,6 +14,7 @@ import {
   playWithFallback,
   selectEngine,
   type EngineRegistry,
+  type PlaybackControls,
   type ReceiverEnginePreference,
 } from "@/scripts/receiver/engine-select"
 import {
@@ -53,6 +54,7 @@ import {
   type ThrottledProgressWriter,
 } from "@/scripts/tv/playback-progress"
 import { createOsd, type OsdHandle, type OsdLiveChannel } from "@/scripts/tv/ui/osd"
+import { createActionSheet, type ActionSheetHandle, type ActionSheetItem } from "@/scripts/tv/ui/action-sheet"
 import { resolveZapTarget } from "@/scripts/tv/osd-zap"
 import { WHEEL_STEP_THROTTLE_MS, WHEEL_STEP_THRESHOLD } from "./focus"
 
@@ -180,6 +182,11 @@ let retryFailureKey: string | null = null
 let retryFailureStreak = 0
 let retryReenableTimer: ReturnType<typeof setTimeout> | null = null
 let cursorHideTimer: ReturnType<typeof setTimeout> | null = null
+let playbackOptionsSheet: ActionSheetHandle | null = null
+let playbackOptionsCleanup: (() => void) | null = null
+
+const PLAYBACK_RATE_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 2] as const
+const SELECTED_MARK = "✓ "
 
 // Re-enables the retry button and drops its backoff timer immediately - called whenever
 // a fresh play attempt targets a different descriptor, so its disabled state never outlives
@@ -330,6 +337,69 @@ function seekVodBy(deltaSeconds: number): void {
   seekVodTo(currentPositionSeconds + deltaSeconds, deltaSeconds)
 }
 
+function buildPlaybackOptionsItems(controls: PlaybackControls): ActionSheetItem[] {
+  const items: ActionSheetItem[] = []
+
+  const audioTracks = controls.listAudioTracks()
+  if (audioTracks.length) {
+    items.push({ label: t("player.audio"), header: true })
+    for (const track of audioTracks) {
+      items.push({
+        label: track.selected ? `${SELECTED_MARK}${track.label}` : track.label,
+        onSelect: () => { void controls.selectAudioTrack(track.id) },
+      })
+    }
+  }
+
+  const subtitleTracks = controls.listSubtitleTracks()
+  if (subtitleTracks.length) {
+    const subtitlesOff = !subtitleTracks.some((track) => track.selected)
+    items.push({ label: t("player.subtitles"), header: true })
+    items.push({
+      label: subtitlesOff ? `${SELECTED_MARK}${t("player.subtitles.off")}` : t("player.subtitles.off"),
+      onSelect: () => { void controls.selectSubtitleTrack(null) },
+    })
+    for (const track of subtitleTracks) {
+      items.push({
+        label: track.selected ? `${SELECTED_MARK}${track.label}` : track.label,
+        onSelect: () => { void controls.selectSubtitleTrack(track.id) },
+      })
+    }
+  }
+
+  items.push({ label: t("player.controls.speed"), header: true })
+  const currentRate = controls.getPlaybackRate()
+  for (const rate of PLAYBACK_RATE_OPTIONS) {
+    const label = t("player.controls.speedOption", { value: `${rate}x` })
+    items.push({
+      label: Math.abs(currentRate - rate) < 0.01 ? `${SELECTED_MARK}${label}` : label,
+      onSelect: () => controls.setPlaybackRate(rate),
+    })
+  }
+
+  return items
+}
+
+function openPlaybackOptionsSheet(controls: PlaybackControls): void {
+  if (!playbackOptionsSheet) playbackOptionsSheet = createActionSheet("tv-playback-options")
+  const sheet = playbackOptionsSheet
+  playbackOptionsCleanup?.()
+
+  const render = () => sheet.open(t("tv.playbackOptions.title"), buildPlaybackOptionsItems(controls))
+  render()
+
+  const unsubscribeTracks = controls.onTracksChanged(render)
+  const unsubscribeClose = sheet.onClose(() => {
+    unsubscribeTracks()
+    unsubscribeClose()
+    playbackOptionsCleanup = null
+  })
+  playbackOptionsCleanup = () => {
+    unsubscribeTracks()
+    unsubscribeClose()
+  }
+}
+
 function handleKeydown(event: KeyboardEvent): void {
   const key = event.key
   // Zapping stays live through the mount gap, when the player is on screen but has no engine yet.
@@ -348,8 +418,19 @@ function handleKeydown(event: KeyboardEvent): void {
   }
   if (!activeEngine) return
   if (document.activeElement === playerDom?.errorRetryEl) return
+  // While open, the dialog's own focus/Escape handling owns input (see attachDialogSpatialNav).
+  if (playbackOptionsSheet?.isOpen()) return
   const embeddedLive = isEmbeddedActive() && currentIsLive
 
+  if (!zapDigits && (key === "ContextMenu" || key === "Menu" || key === "o" || key === "O")) {
+    const controls = activeEngine?.getPlaybackControls?.() ?? null
+    if (controls) {
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      openPlaybackOptionsSheet(controls)
+      return
+    }
+  }
   if (embeddedLive && /^[0-9]$/.test(key)) {
     event.preventDefault()
     event.stopImmediatePropagation()
@@ -511,6 +592,10 @@ function ensureDom(): EmbeddedEngineDom {
 
   document.addEventListener("keydown", handleKeydown, true)
   registerBackInterceptor(() => {
+    if (playbackOptionsSheet?.isOpen()) {
+      playbackOptionsSheet.close()
+      return true
+    }
     if (activeEngine || externalPlaybackActive) {
       stopPlayback()
       return true
@@ -595,6 +680,7 @@ function handleSessionEnded(): void {
   setKeepScreenOn(false)
   cancelZap()
   osd?.hideAll()
+  playbackOptionsSheet?.close()
   if (playerDom?.playerViewEl) showCursor(playerDom.playerViewEl)
   const events = currentEvents
   currentEvents = null
@@ -819,6 +905,7 @@ async function runStartSession(descriptor: CastDescriptorV1, session: StartSessi
     void stopExternalPlayback(previousExternalKind).catch(() => {})
   }
   cancelZap()
+  playbackOptionsSheet?.close()
   currentEvents = session.events
   activeProgressTarget = session.progressTarget ?? null
   activeLiveTarget = session.liveTarget ?? null

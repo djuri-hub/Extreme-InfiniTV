@@ -71,7 +71,7 @@ export interface DrmOptions {
 
 export interface VjsLikeHandle {
   /** Mounts a source; `trackMemory` identifies the title for per-title audio/subtitle track restore+persist. */
-  src(opts: { src: string; type: string; drm?: DrmOptions | null; isLive?: boolean; durationSeconds?: number; timelineOffsetSeconds?: number; subtitles?: { sourceUrl: string; mkvSession?: import("@/scripts/lib/vod-proxy.js").MkvSubtitleSession | null } | null; audio?: AudioTrackSource | null; preferNativeHls?: boolean; title?: string; trackMemory?: TrackMemoryContext | null }): void
+  src(opts: { src: string; type: string; drm?: DrmOptions | null; isLive?: boolean; durationSeconds?: number; timelineOffsetSeconds?: number; /** mpv-embedded only: per-load start position, ignored by other backends. */ startSeconds?: number; subtitles?: { sourceUrl: string; mkvSession?: import("@/scripts/lib/vod-proxy.js").MkvSubtitleSession | null } | null; audio?: AudioTrackSource | null; preferNativeHls?: boolean; title?: string; trackMemory?: TrackMemoryContext | null }): void
   /** Wires a caller-supplied audio track source into the current mount without remounting; a no-op on engines/mounts that don't use caller-supplied tracks (e.g. hls.js/shaka, which source their own). Lets background VOD audio-track discovery attach a switcher after the source is already playing. */
   setAudioSource?(source: AudioTrackSource | null): void
   play(): Promise<unknown> | void
@@ -133,6 +133,13 @@ export interface VjsLikeHandle {
   subtitleStyle?(patch?: Partial<MpvSubtitleStyle>): MpvSubtitleStyle
   /** Reads the current audio-delay offset (seconds); an optional delta adjusts and persists it for the session. */
   audioDelay?(deltaSeconds?: number): number
+  /** mpv-embedded only; for callers without the HTML control bar. */
+  listAudioTracks?(): { id: number; label: string; selected: boolean }[]
+  /** mpv-embedded only: embedded subtitle tracks; "off" has no selected entry. */
+  listSubtitleTracks?(): { id: number; label: string; selected: boolean }[]
+  selectAudioTrack?(id: number): Promise<void>
+  /** null selects "off" (mpv `sid` "no"). */
+  selectSubtitleTrack?(id: number | null): Promise<void>
 }
 
 export interface ExternalLaunchOptions {

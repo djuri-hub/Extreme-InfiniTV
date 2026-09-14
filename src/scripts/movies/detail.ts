@@ -105,7 +105,6 @@ import {
   mountPlayer,
   getExternalLauncher,
   subscribeExternalPlayerExit,
-  isNativeVideoBackend,
 } from "@/scripts/lib/player-runtime.ts"
 import { beginExternalSession, externalSrcKey } from "@/scripts/lib/external-progress.ts"
 import { toast } from "@/scripts/lib/toast.js"
@@ -715,16 +714,7 @@ function syncResumeUI() {
 // ----------------------------
 let vjs = null
 let focusKeeperCleanup: (() => void) | null = null
-let embeddedPlayerBackend = null
 let movieInsights = null
-const heroWrap = document.getElementById("movie-detail-hero")
-
-// Pins the player container in place while the embedded mpv window plays underneath it - see mpv-embedded.ts.
-function updateStickyPlayer() {
-  if (!heroWrap) return
-  if (vjs && isNativeVideoBackend(embeddedPlayerBackend)) heroWrap.dataset.stickyPlayer = "on"
-  else delete heroWrap.dataset.stickyPlayer
-}
 
 const inlineTrailer = createInlineTrailer({
   wrapEl: document.getElementById("movie-detail-trailer-wrap"),
@@ -876,12 +866,10 @@ async function ensureEmbeddedPlayer(backend) {
   })
   if (mounted.kind !== "embedded") return null
   vjs = mounted.handle
-  embeddedPlayerBackend = mounted.backend
   if (mounted.backend === "videojs" || (mounted.backend === "mpv-embedded" && typeof vjs.userActive === "function")) {
     focusKeeperCleanup = attachPlayerFocusKeeper(vjs)
   }
   bindAutoPip(vjs)
-  updateStickyPlayer()
   vjs.el()?.addEventListener?.("xt:mpv-retry", () => { if (movie) startPlayback() })
   return vjs
 }
@@ -899,7 +887,6 @@ function retirePreviousPlayback() {
   stallWatchdogDetach = null
   qualityChipDetach?.()
   qualityChipDetach = null
-  updateStickyPlayer()
 }
 
 async function startPlayback(options = {}) {

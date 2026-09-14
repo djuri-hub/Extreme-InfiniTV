@@ -6,7 +6,8 @@ import { toastError, toastSuccess } from "@/scripts/lib/toast.js"
 import { wrapForDnsProxyExternal } from "@/scripts/lib/player-runtime.js"
 import { getMpvStartConfig, getDownloadDir } from "@/scripts/lib/app-settings.js"
 import { mountMpvControls } from "@/scripts/lib/mpv-controls.js"
-import { openMpvTrackDialog } from "@/scripts/lib/mpv-track-dialog.js"
+import { buildMpvMenu, toLegacyMpvMenuData, parseMpvMenuMessageId } from "@/scripts/lib/mpv-menu.js"
+import type { MpvMenuKind, MpvMenuPick } from "@/scripts/lib/mpv-menu.js"
 import {
   parseMpvAudioTracks,
   parseMpvSubtitleTracks,
@@ -36,6 +37,11 @@ export interface LoadOptions {
   isLive: boolean
   networkTimeoutSeconds: number | null
   mediaTitle: string | null
+}
+
+/** VjsLikeHandle plus the native-menu opener; no anchor means the cursor. */
+export interface MpvEmbeddedHandle extends VjsLikeHandle {
+  openNativeMenu(kind: MpvMenuKind, anchorElement?: HTMLElement | null): Promise<void>
 }
 
 export interface MpvEmbeddedCreateOptions {
@@ -93,7 +99,7 @@ interface MpvStateEventPayload {
   props: MpvProps
 }
 
-type MpvEventKind = "file-loaded" | "end-file" | "playback-restart" | "start-file" | "log"
+type MpvEventKind = "file-loaded" | "end-file" | "playback-restart" | "start-file" | "log" | "client-message"
 
 interface MpvEventPayload {
   sessionId: string
@@ -102,6 +108,8 @@ interface MpvEventPayload {
   detail?: string | null
   /** HTTP status ffmpeg logged, only set alongside an "end-file" kind. */
   httpStatus?: number | null
+  /** Set alongside a "client-message" kind: the script-message's own args, name first. */
+  args?: string[]
 }
 
 interface MpvExitedEventPayload {
@@ -138,8 +146,6 @@ interface MpvEmbedStartResult {
 // Below this, a resume seek would restart from near-zero rather than actually resuming.
 const RESUME_MIN_SECONDS = 5
 
-// Sentinel dialog item id: never collides with mpv's own numeric track ids.
-const LOAD_SUBTITLE_FILE_ID = "__load-subtitle-file__"
 const SUBTITLE_FILE_EXTENSIONS = ["srt", "ass", "ssa", "vtt", "sub"]
 
 const isTauri =
@@ -222,17 +228,14 @@ export interface NativeVideoHoleVars {
 
 const NATIVE_VIDEO_HOLE_PROPERTIES = ["--xt-video-x", "--xt-video-y", "--xt-video-w", "--xt-video-h", "--xt-video-r"] as const
 
-/** CSS-pixel hole geometry for the transparent webview cutout; see native-video-hole-contract.md. */
-export function cssRectToNativeVideoHoleVars(rect: {
-  x: number
-  y: number
-  width: number
-  height: number
-  radius?: string | number
-}): NativeVideoHoleVars {
+/** Owner-relative CSS-pixel hole geometry for the webview cutout. */
+export function cssRectToNativeVideoHoleVars(
+  rect: { x: number; y: number; width: number; height: number; radius?: string | number },
+  ownerRect: { x: number; y: number },
+): NativeVideoHoleVars {
   return {
-    "--xt-video-x": `${rect.x}px`,
-    "--xt-video-y": `${rect.y}px`,
+    "--xt-video-x": `${rect.x - ownerRect.x}px`,
+    "--xt-video-y": `${rect.y - ownerRect.y}px`,
     "--xt-video-w": `${rect.width}px`,
     "--xt-video-h": `${rect.height}px`,
     "--xt-video-r": `${parseCssRadiusPx(rect.radius)}px`,
@@ -242,6 +245,8 @@ export function cssRectToNativeVideoHoleVars(rect: {
 export interface BuildLoadOptionsInput {
   isLive?: boolean
   timelineOffsetSeconds?: number
+  /** Per-load start position; timelineOffsetSeconds (catch-up) wins over it. */
+  startSeconds?: number
   resumeSeconds?: number
   userAgent?: string | null
   referer?: string | null
@@ -253,6 +258,8 @@ export function buildLoadOptions(input: BuildLoadOptionsInput): LoadOptions {
   let startSeconds: number | null = null
   if (Number.isFinite(input.timelineOffsetSeconds) && (input.timelineOffsetSeconds as number) > 0) {
     startSeconds = input.timelineOffsetSeconds as number
+  } else if (Number.isFinite(input.startSeconds) && (input.startSeconds as number) > 0) {
+    startSeconds = input.startSeconds as number
   } else if (Number.isFinite(input.resumeSeconds) && (input.resumeSeconds as number) > RESUME_MIN_SECONDS) {
     startSeconds = input.resumeSeconds as number
   }
@@ -386,15 +393,26 @@ const SUBTITLE_COLORS: MpvSubtitleStyle["color"][] = ["white", "yellow"]
 const SUB_SCALE_BY_SIZE: Record<MpvSubtitleStyle["size"], number> = { small: 0.8, normal: 1, large: 1.25, xlarge: 1.5 }
 const SUB_POS_BY_POSITION: Record<MpvSubtitleStyle["position"], number> = { bottom: 100, raised: 80 }
 const SUB_COLOR_BY_COLOR: Record<MpvSubtitleStyle["color"], string> = { white: "#FFFFFF", yellow: "#FFFF00" }
+// ASS colours are &HAABBGGRR; empty string clears the override so the script's own colour returns.
+const SUB_ASS_STYLE_OVERRIDE_BY_COLOR: Record<MpvSubtitleStyle["color"], string> = {
+  white: "",
+  yellow: "PrimaryColour=&H0000FFFF",
+}
 
 /** Maps a subtitle style to the mpv properties that render it. */
-export function subtitleStyleToMpvProperties(
-  style: MpvSubtitleStyle,
-): { "sub-scale": number; "sub-pos": number; "sub-color": string } {
+export function subtitleStyleToMpvProperties(style: MpvSubtitleStyle): {
+  "sub-scale": number
+  "sub-pos": number
+  "sub-color": string
+  "sub-ass-override": "scale"
+  "sub-ass-style-overrides": string
+} {
   return {
     "sub-scale": SUB_SCALE_BY_SIZE[style.size] ?? SUB_SCALE_BY_SIZE.normal,
     "sub-pos": SUB_POS_BY_POSITION[style.position] ?? SUB_POS_BY_POSITION.bottom,
     "sub-color": SUB_COLOR_BY_COLOR[style.color] ?? SUB_COLOR_BY_COLOR.white,
+    "sub-ass-override": "scale",
+    "sub-ass-style-overrides": SUB_ASS_STYLE_OVERRIDE_BY_COLOR[style.color] ?? SUB_ASS_STYLE_OVERRIDE_BY_COLOR.white,
   }
 }
 
@@ -499,6 +517,12 @@ export function deriveEvents(previousProps: MpvProps | null, nextProps: MpvProps
   }
   if (nextProps.trackList !== previous.trackList) {
     events.push("trackschanged")
+  }
+  if (nextProps.aid !== previous.aid || nextProps.sid !== previous.sid) {
+    events.push("trackselectionchanged")
+  }
+  if (typeof nextProps.subDelay === "number" && nextProps.subDelay !== previous.subDelay) {
+    events.push("delaychange")
   }
   if (typeof nextProps.streamRecord === "string" && nextProps.streamRecord !== previous.streamRecord) {
     events.push("recordingchange")
@@ -671,6 +695,8 @@ export async function createMpvEmbeddedHandle(
 
   let hasLoadedSource = false
   let loadGeneration = 0
+  // Set before the await that fills lastLoadRequest.
+  let pendingIsLive: boolean | null = null
   let currentTrackMemory: TrackMemoryContext | null = null
   let trackMemoryAppliedForLoad = false
   // The generation this load's restore is bound to; guards a stale playback-restart from a superseded load.
@@ -747,6 +773,8 @@ export async function createMpvEmbeddedHandle(
   let liveEofReloadTimer: ReturnType<typeof setTimeout> | null = null
   let liveEofStableTimer: ReturnType<typeof setTimeout> | null = null
   let lastPlaybackRestartAt: number | null = null
+  // Blocks a repeated eof-reached flip from re-firing "ended"; play()/seek re-arm it.
+  let vodEofEndedArmed = true
 
   function clearLiveEofTimers(): void {
     if (liveEofReloadTimer != null) {
@@ -806,7 +834,7 @@ export async function createMpvEmbeddedHandle(
     liveStallTimer = setInterval(tickLiveStallWatchdog, 1000)
   }
 
-  function reloadLastLiveSource(): void {
+  function reloadLastLoadRequest(): void {
     if (!lastLoadRequest || disposed) return
     pauseState = false
     void invoke("mpv_embed_load", {
@@ -814,7 +842,7 @@ export async function createMpvEmbeddedHandle(
       url: lastLoadRequest.url,
       options: lastLoadRequest.loadOptions,
     }).catch((err: unknown) => {
-      log.warn("[xt:mpv-embed] live EOF reload failed:", err)
+      log.warn("[xt:mpv-embed] reload failed:", err)
     })
   }
 
@@ -828,7 +856,7 @@ export async function createMpvEmbeddedHandle(
     emitter.emit("waiting")
     liveEofReloadTimer = setTimeout(() => {
       liveEofReloadTimer = null
-      reloadLastLiveSource()
+      reloadLastLoadRequest()
     }, delay)
     return true
   }
@@ -871,7 +899,11 @@ export async function createMpvEmbeddedHandle(
       emitter.emit("error")
       return true
     }
-    return false
+    if (vodEofEndedArmed) {
+      vodEofEndedArmed = false
+      emitter.emit("ended")
+    }
+    return true
   }
 
   // Runs once per load generation, on playback-restart once the track list has settled.
@@ -931,6 +963,8 @@ export async function createMpvEmbeddedHandle(
         emitter.emit("error")
         emitEngineEvent("engine-error", payload.detail || "mpv end-file error")
       }
+    } else if (payload.kind === "client-message") {
+      handleMenuMessage(payload.args ?? [])
     }
   }
 
@@ -967,37 +1001,63 @@ export async function createMpvEmbeddedHandle(
 
   // See native-video-hole-contract.md: the webview must cut a transparent hole for the video below it.
   // Owner stamp: a stale handle's dispose() can't clear a hole it no longer owns.
-  // Vars live on the hole owner (never <html>), so a resize only recalcs that subtree's style.
+  // Vars are owner-relative, so a scroll of an ancestor above the owner never moves the hole.
   let lastHoleOwner: HTMLElement | null = null
+  let ownerPreviousPositionInline: string | null = null
+  let ownerPositionWasSet = false
+  function currentHoleOwner(): HTMLElement {
+    return container.closest<HTMLElement>(".xt-video-hole") ?? container.parentElement ?? document.body
+  }
+  // getComputedStyle(owner).position === "static" would leave the owner-relative vars meaningless.
+  function ensureOwnerPositioned(owner: HTMLElement): void {
+    if (window.getComputedStyle(owner).position !== "static") return
+    ownerPreviousPositionInline = owner.style.position
+    ownerPositionWasSet = true
+    owner.style.position = "relative"
+  }
+  function releaseHoleOwner(): void {
+    if (!lastHoleOwner) return
+    for (const property of NATIVE_VIDEO_HOLE_PROPERTIES) lastHoleOwner.style.removeProperty(property)
+    lastHoleOwner.removeAttribute("data-native-video-hole-owner")
+    if (ownerPositionWasSet) {
+      if (ownerPreviousPositionInline) lastHoleOwner.style.position = ownerPreviousPositionInline
+      else lastHoleOwner.style.removeProperty("position")
+      ownerPositionWasSet = false
+      ownerPreviousPositionInline = null
+    }
+    lastHoleOwner = null
+  }
   function clearNativeVideoHole(): void {
     // Resetting on an already-closed hole re-pushes bounds and loops through xt:mpv-surface.
     if (document.documentElement.getAttribute("data-native-video-owner") === sessionId) {
       document.documentElement.removeAttribute("data-native-video")
       document.documentElement.removeAttribute("data-native-video-owner")
-      if (lastHoleOwner) {
-        for (const property of NATIVE_VIDEO_HOLE_PROPERTIES) lastHoleOwner.style.removeProperty(property)
-        lastHoleOwner = null
-      }
+      releaseHoleOwner()
       resetBoundsCache()
     }
   }
-  function publishNativeVideoHole(cssRect: { x: number; y: number; width: number; height: number; radius?: string }): void {
+  function publishNativeVideoHole(
+    cssRect: { x: number; y: number; width: number; height: number; radius?: string },
+    owner: HTMLElement,
+    ownerRect: { x: number; y: number },
+  ): void {
     const root = document.documentElement
     if (root.getAttribute("data-native-video") !== "on") root.setAttribute("data-native-video", "on")
     if (root.getAttribute("data-native-video-owner") !== sessionId) root.setAttribute("data-native-video-owner", sessionId)
-    const owner = container.closest<HTMLElement>(".xt-video-hole") ?? document.body
     if (owner !== lastHoleOwner) {
-      if (lastHoleOwner) for (const property of NATIVE_VIDEO_HOLE_PROPERTIES) lastHoleOwner.style.removeProperty(property)
+      releaseHoleOwner()
       lastHoleOwner = owner
+      owner.setAttribute("data-native-video-hole-owner", "")
+      ensureOwnerPositioned(owner)
     }
-    const vars = cssRectToNativeVideoHoleVars(cssRect)
+    const vars = cssRectToNativeVideoHoleVars(cssRect, ownerRect)
     for (const [property, value] of Object.entries(vars)) {
       owner.style.setProperty(property, value)
     }
   }
 
   let rafHandle: number | null = null
-  let lastCssBounds: Bounds | null = null
+  let lastOwnerRelativeBounds: Bounds | null = null
   let lastPushedBounds: Bounds | null = null
   // getComputedStyle forces a full style recalc; the radius only changes on the resets below.
   let cachedContainerRadius: string | null = null
@@ -1010,7 +1070,7 @@ export async function createMpvEmbeddedHandle(
     return { x: rect.x, y: rect.y, width: rect.width, height: rect.height, radius: cachedContainerRadius }
   }
   function resetBoundsCache(): void {
-    lastCssBounds = null
+    lastOwnerRelativeBounds = null
     lastPushedBounds = null
     cachedContainerRadius = null
   }
@@ -1025,13 +1085,24 @@ export async function createMpvEmbeddedHandle(
     if (disposed || !container.isConnected) return
     const cssRect = cssRectWithCachedRadius()
     if (cssRect.width <= 0 || cssRect.height <= 0) return
-    const cssBounds = cssRectToPhysicalBounds(cssRect, 1)
-    const boundsChanged = !boundsEqual(cssBounds, lastCssBounds)
-    lastCssBounds = cssBounds
     const holeOwnedByAnotherSession =
       document.documentElement.getAttribute("data-native-video-owner") !== sessionId
-    if (holeOpen && (boundsChanged || holeOwnedByAnotherSession)) {
-      publishNativeVideoHole(cssRect)
+    if (holeOpen) {
+      const owner = currentHoleOwner()
+      const ownerRect = owner.getBoundingClientRect()
+      const ownerRelativeBounds = cssRectToPhysicalBounds(
+        {
+          x: cssRect.x - ownerRect.x,
+          y: cssRect.y - ownerRect.y,
+          width: cssRect.width,
+          height: cssRect.height,
+          radius: cssRect.radius,
+        },
+        1,
+      )
+      const ownerRelativeChanged = owner !== lastHoleOwner || !boundsEqual(ownerRelativeBounds, lastOwnerRelativeBounds)
+      lastOwnerRelativeBounds = ownerRelativeBounds
+      if (ownerRelativeChanged || holeOwnedByAnotherSession) publishNativeVideoHole(cssRect, owner, ownerRect)
     }
     const bounds = cssRectToPhysicalBounds(cssRect, window.devicePixelRatio || 1, NATIVE_BOUNDS_INFLATE_CSS_PX)
     if (boundsEqual(bounds, lastPushedBounds)) return
@@ -1157,18 +1228,10 @@ export async function createMpvEmbeddedHandle(
   }
   applySubtitleStyleProperties(currentSubtitleStyle)
 
-  async function openAudioTrackMenu(): Promise<void> {
-    const tracks = parseMpvAudioTracks(props.trackList, props.aid, getActiveLocale())
-    if (!tracks.length) return
-    const picked = await openMpvTrackDialog(
-      "audio",
-      tracks.map((track) => ({ id: track.id, label: track.label, active: track.active })),
-    )
-    if (picked?.id == null) return
-    const pickedId = Number(picked.id)
-    void setProperty("aid", pickedId)
+  function applyAudioTrackSelection(pickedId: number): Promise<void> {
     const raw = mpvTrackCandidates(props.trackList, "audio").find((entry) => entry.id === pickedId)
     rememberAudioTrack(currentTrackMemory, raw ? { id: raw.id, lang: raw.lang, title: raw.title } : null)
+    return setProperty("aid", pickedId)
   }
 
   async function loadExternalSubtitleFile(): Promise<void> {
@@ -1187,32 +1250,145 @@ export async function createMpvEmbeddedHandle(
     }
   }
 
-  async function openSubtitleTrackMenu(): Promise<void> {
-    const tracks = parseMpvSubtitleTracks(props.trackList, props.sid, getActiveLocale())
-    const hasActiveTrack = tracks.some((track) => track.active)
-    const picked = await openMpvTrackDialog("subtitles", [
-      { id: null, label: t("player.subtitles.off"), active: !hasActiveTrack },
-      ...tracks.map((track) => ({ id: String(track.id), label: track.label, active: track.active })),
-      { id: LOAD_SUBTITLE_FILE_ID, label: t("player.subtitles.loadFile"), active: false },
-    ])
-    if (!picked) return
-    if (picked.id === LOAD_SUBTITLE_FILE_ID) {
-      void loadExternalSubtitleFile()
-      return
-    }
-    if (picked.id === null) {
-      void setProperty("sid", "no")
+  function applySubtitleTrackSelection(pickedId: number | null): Promise<void> {
+    if (pickedId == null) {
       rememberSubtitleTrack(currentTrackMemory, null)
-      return
+      return setProperty("sid", "no")
     }
-    const pickedId = Number(picked.id)
-    void setProperty("sid", pickedId)
     const raw = mpvTrackCandidates(props.trackList, "sub").find((entry) => entry.id === pickedId)
     rememberSubtitleTrack(currentTrackMemory, raw ? { id: raw.id, lang: raw.lang, title: raw.title } : null)
+    return setProperty("sid", pickedId)
   }
 
+  // Both pick paths resolve ids against the most recently built menu.
+  let lastMenuPicks: Map<number, MpvMenuPick> | null = null
+
+  function buildMenuForKind(kind: MpvMenuKind) {
+    if (kind === "audio") {
+      const tracks = parseMpvAudioTracks(props.trackList, props.aid, getActiveLocale())
+      return buildMpvMenu("audio", { tracks: tracks.map((track) => ({ id: Number(track.id), label: track.label, active: track.active })) })
+    }
+    if (kind === "subtitles") {
+      return buildMpvMenu("subtitles", { tracks: parseMpvSubtitleTracks(props.trackList, props.sid, getActiveLocale()) })
+    }
+    if (kind === "speed") {
+      return buildMpvMenu("speed", { currentRate: typeof props.speed === "number" ? props.speed : 1 })
+    }
+    if (kind === "subtitleDelay") {
+      return buildMpvMenu("subtitleDelay", { currentSeconds: typeof props.subDelay === "number" ? props.subDelay : 0 })
+    }
+    if (kind === "audioDelay") {
+      return buildMpvMenu("audioDelay", { currentSeconds: currentAudioDelay })
+    }
+    if (kind === "subtitleStyle") {
+      return buildMpvMenu("subtitleStyle", { style: currentSubtitleStyle })
+    }
+    return buildMpvMenu("root", {
+      audioTracks: parseMpvAudioTracks(props.trackList, props.aid, getActiveLocale()).map((track) => ({
+        id: Number(track.id),
+        label: track.label,
+        active: track.active,
+      })),
+      subtitleTracks: parseMpvSubtitleTracks(props.trackList, props.sid, getActiveLocale()),
+      currentRate: typeof props.speed === "number" ? props.speed : 1,
+      subtitleDelaySeconds: typeof props.subDelay === "number" ? props.subDelay : 0,
+      audioDelaySeconds: currentAudioDelay,
+      subtitleStyle: currentSubtitleStyle,
+    })
+  }
+
+  function resetSubtitleDelay(): void {
+    props = { ...props, subDelay: 0 }
+    void setProperty("sub-delay", 0)
+    emitter.emit("delaychange")
+  }
+
+  function applyMenuPick(pick: MpvMenuPick): void {
+    switch (pick.kind) {
+      case "audio":
+        void applyAudioTrackSelection(pick.id)
+        break
+      case "subtitle":
+        void applySubtitleTrackSelection(pick.id)
+        break
+      case "subtitle-file":
+        void loadExternalSubtitleFile()
+        break
+      case "speed":
+        void setProperty("speed", clampPlaybackRate(pick.rate))
+        break
+      case "subtitle-delay-step":
+        handle.subtitleDelay?.(pick.deltaMs / 1000)
+        break
+      case "subtitle-delay-reset":
+        resetSubtitleDelay()
+        break
+      case "audio-delay-step":
+        handle.audioDelay?.(pick.deltaMs / 1000)
+        break
+      case "audio-delay-reset":
+        handle.audioDelay?.(-currentAudioDelay)
+        break
+      case "subtitle-style-size":
+        handle.subtitleStyle?.({ size: pick.size })
+        break
+      case "subtitle-style-position":
+        handle.subtitleStyle?.({ position: pick.position })
+        break
+      case "subtitle-style-color":
+        handle.subtitleStyle?.({ color: pick.color })
+        break
+      case "subtitle-style-reset":
+        handle.subtitleStyle?.({ ...DEFAULT_MPV_SUBTITLE_STYLE })
+        break
+    }
+  }
+
+  function anchorFromElement(anchorElement: HTMLElement): Bounds {
+    const rect = anchorElement.getBoundingClientRect()
+    return cssRectToPhysicalBounds(
+      { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+      window.devicePixelRatio || 1,
+    )
+  }
+
+  /** Opens the native menu for `kind` at the anchor, or the cursor. */
+  async function openNativeMenu(kind: MpvMenuKind, anchorElement?: HTMLElement | null): Promise<void> {
+    const built = buildMenuForKind(kind)
+    lastMenuPicks = built.picks
+    const anchor = anchorElement ? anchorFromElement(anchorElement) : null
+    try {
+      const pickedId = await invoke<number | null>("mpv_embed_show_menu", { sessionId, items: built.items, anchor })
+      if (pickedId != null) {
+        const pick = built.picks.get(pickedId)
+        if (pick) applyMenuPick(pick)
+      }
+      return
+    } catch (err) {
+      log.warn("[xt:mpv-embed] mpv_embed_show_menu unavailable, falling back to mpv's own menu:", err)
+    }
+    // Older Rust without mpv_embed_show_menu: use mpv's own context-menu.
+    await setProperty("menu-data", toLegacyMpvMenuData(built.items))
+    await invoke("mpv_embed_command", { sessionId, args: ["context-menu"] }).catch((fallbackErr: unknown) => {
+      log.warn("[xt:mpv-embed] context-menu command failed:", fallbackErr)
+    })
+  }
+
+  function handleMenuMessage(args: string[]): void {
+    const pickedId = parseMpvMenuMessageId(args)
+    if (pickedId == null || !lastMenuPicks) return
+    const pick = lastMenuPicks.get(pickedId)
+    if (pick) applyMenuPick(pick)
+  }
+
+  function handleContainerContextMenu(event: MouseEvent): void {
+    event.preventDefault()
+    void openNativeMenu("root", null)
+  }
+  container.addEventListener("contextmenu", handleContainerContextMenu)
+
   function isLiveSession(): boolean {
-    return lastLoadRequest?.loadOptions.isLive ?? true
+    return lastLoadRequest?.loadOptions.isLive ?? pendingIsLive ?? true
   }
 
   function computeLiveWindow(): { start: number; end: number; position: number } | null {
@@ -1233,13 +1409,15 @@ export async function createMpvEmbeddedHandle(
     )
   }
 
-  const handle: VjsLikeHandle = {
+  const handle: MpvEmbeddedHandle = {
+    openNativeMenu,
     src(opts) {
       lastErrorDetail = null
       clearLiveEofTimers()
       liveEofRetryCount = 0
       lastPlaybackRestartAt = null
       lastLiveSeekAt = null
+      vodEofEndedArmed = true
       noteProgress()
       currentMediaTitle = opts.title?.trim() || null
       currentTrackMemory = opts.trackMemory ?? null
@@ -1256,12 +1434,14 @@ export async function createMpvEmbeddedHandle(
       const loadOptions = buildLoadOptions({
         isLive: opts.isLive,
         timelineOffsetSeconds: opts.timelineOffsetSeconds,
+        startSeconds: opts.startSeconds,
         resumeSeconds: options.resumeSeconds,
         userAgent: options.userAgent,
         referer: options.referer,
         networkTimeoutSeconds: options.networkTimeoutSeconds,
         mediaTitle: opts.title,
       })
+      pendingIsLive = loadOptions.isLive
       if (loadOptions.isLive) ensureLiveStallWatchdog()
       else clearLiveStallWatchdog()
       const generation = ++loadGeneration
@@ -1286,15 +1466,24 @@ export async function createMpvEmbeddedHandle(
     },
     play() {
       pauseState = false
-      if ((props.eofReached === true || props.idleActive === true) && lastLoadRequest) {
+      vodEofEndedArmed = true
+      // A fresh session stays idle-active until its first file opens.
+      const loadSettling = srcLoadInFlight || lastPlaybackRestartAt == null
+      if (loadSettling) return setProperty("pause", false)
+      if (props.eofReached === true && lastLoadRequest) {
         if (lastLoadRequest.loadOptions.isLive) {
-          reloadLastLiveSource()
+          reloadLastLoadRequest()
           return Promise.resolve()
         }
         // A reload here would replay from the remembered resume position, not the start.
         return invoke("mpv_embed_command", { sessionId, args: ["seek", "0", "absolute"] })
           .catch((err: unknown) => log.warn("[xt:mpv-embed] restart seek failed:", err))
           .then(() => setProperty("pause", false))
+      }
+      if (props.idleActive === true && lastLoadRequest) {
+        // Idle without eof: the load failed or was stopped, so reload.
+        reloadLastLoadRequest()
+        return Promise.resolve()
       }
       return setProperty("pause", false)
     },
@@ -1327,6 +1516,7 @@ export async function createMpvEmbeddedHandle(
     },
     currentTime(value) {
       if (value === undefined) return props.timePos ?? 0
+      vodEofEndedArmed = true
       let target = value
       const liveWindow = computeLiveWindow()
       if (liveWindow) {
@@ -1360,6 +1550,26 @@ export async function createMpvEmbeddedHandle(
     // No-op: mpv exposes its own tracks via track-list/aid, picked from the "Audio tracks" menu.
     setAudioSource() {},
     setProperty,
+    listAudioTracks() {
+      return parseMpvAudioTracks(props.trackList, props.aid, getActiveLocale()).map((track) => ({
+        id: Number(track.id),
+        label: track.label,
+        selected: track.active,
+      }))
+    },
+    listSubtitleTracks() {
+      return parseMpvSubtitleTracks(props.trackList, props.sid, getActiveLocale()).map((track) => ({
+        id: track.id,
+        label: track.label,
+        selected: track.active,
+      }))
+    },
+    async selectAudioTrack(id) {
+      await applyAudioTrackSelection(id)
+    },
+    async selectSubtitleTrack(id) {
+      await applySubtitleTrackSelection(id)
+    },
     on: emitter.on,
     off: emitter.off,
     one: emitter.one,
@@ -1431,6 +1641,7 @@ export async function createMpvEmbeddedHandle(
         log.warn("[xt:mpv-embed] stop command failed:", err)
       })
       lastLoadRequest = null
+      pendingIsLive = null
       clearLiveEofTimers()
       liveEofRetryCount = 0
       setRevealed(false)
@@ -1474,6 +1685,8 @@ export async function createMpvEmbeddedHandle(
       if (deltaSeconds !== undefined) {
         currentAudioDelay = clampAudioDelaySeconds(currentAudioDelay + deltaSeconds)
         void setProperty("audio-delay", currentAudioDelay)
+        // audio-delay is not observed from mpv; the frontend value is authoritative.
+        emitter.emit("delaychange")
       }
       return currentAudioDelay
     },
@@ -1516,6 +1729,7 @@ export async function createMpvEmbeddedHandle(
       }
       delete container.dataset.webFullscreen
       window.removeEventListener("keydown", handleWebFullscreenKeydown)
+      container.removeEventListener("contextmenu", handleContainerContextMenu)
       videoHiddenObserver?.disconnect()
       if (videoElement) videoElement.hidden = videoWasHidden
       loadingIndicator.remove()
@@ -1546,8 +1760,9 @@ export async function createMpvEmbeddedHandle(
 
   if (options.controls ?? true) {
     const teardownControls = mountMpvControls(container, handle, {
-      onAudioTracksClick: () => void openAudioTrackMenu(),
-      onSubtitleTracksClick: () => void openSubtitleTrackMenu(),
+      onAudioTracksClick: (anchorElement) => openNativeMenu("audio", anchorElement),
+      onSubtitleTracksClick: (anchorElement) => openNativeMenu("subtitles", anchorElement),
+      onSettingsMenuClick: (anchorElement) => openNativeMenu("root", anchorElement),
       getTrackList: () => props.trackList,
     })
     const originalDispose = handle.dispose?.bind(handle)

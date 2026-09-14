@@ -292,6 +292,7 @@ pub fn run() {
             mpv_embed::mpv_embed_start,
             mpv_embed::mpv_embed_load,
             mpv_embed::mpv_embed_command,
+            mpv_embed::mpv_embed_show_menu,
             mpv_embed::mpv_embed_set_property,
             mpv_embed::mpv_embed_get_property,
             mpv_embed::mpv_embed_set_bounds,

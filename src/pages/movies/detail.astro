@@ -114,6 +114,8 @@ import {
           </div>
         </div>
 
+        <div id="movie-detail-scroll" class="flex flex-col gap-5 custom-scroll">
+
         <!-- Action buttons -->
         <div class="dt-enter dt-stagger-2 flex flex-wrap justify-center items-center gap-2">
           <button
@@ -304,18 +306,11 @@ import {
           </div>
         </section>
 
+        </div>
+
       </div>
     </div>
   </main>
-
-  <style>
-    /* Keeps the embedded mpv window's hole pinned while the page scrolls - see mpv-embedded.ts. */
-    #movie-detail-hero[data-sticky-player="on"] {
-      position: sticky;
-      top: 1rem;
-      z-index: 20;
-    }
-  </style>
 
   <script>
     import "@/scripts/movies/detail.ts"

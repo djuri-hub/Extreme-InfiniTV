@@ -3438,17 +3438,14 @@ html.xt-pip-active body [data-xt-pip-fill] {
 /* ────────────────────────────── */
 /* Native video hole (embedded mpv) */
 /* ────────────────────────────── */
-/* mpv paints below the webview; opaque layers over its rect need a rounded
-   hole. Never clip an element with children - only a childless ::before
-   paints it, via a box-shadow spread that naturally follows border-radius. */
+/* mpv paints below the webview through a hole owner's page-space rect. */
 html[data-native-video="on"] body,
 html[data-native-video="on"] .xt-video-hole {
     background: transparent;
 }
-html[data-native-video="on"] body:not(:has(.xt-video-hole))::before,
-html[data-native-video="on"] .xt-video-hole::before {
+html[data-native-video="on"] [data-native-video-hole-owner]::before {
     content: "";
-    position: fixed;
+    position: absolute;
     left: var(--xt-video-x, 0px);
     top: var(--xt-video-y, 0px);
     width: var(--xt-video-w, 0px);
@@ -3460,6 +3457,9 @@ html[data-native-video="on"] .xt-video-hole::before {
 }
 html[data-native-video="on"] .xt-video-hole {
     --xt-video-hole-color: var(--color-surface);
+}
+html[data-native-video="on"] [data-native-video-hole-owner] {
+    background: transparent;
 }
 html[data-native-video="on"] #player-wrap,
 html[data-native-video="on"] #movie-detail-player-wrap,
@@ -3828,90 +3828,30 @@ html[data-native-video="on"] [data-mpv-embedded][data-web-fullscreen="true"] {
     display: none;
 }
 
-.mpv-controls__popover {
-    position: absolute;
-    bottom: calc(100% + 0.5rem);
-    right: 0;
-    z-index: 45;
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-    min-width: 12rem;
-    max-height: min(70vh, 26rem);
-    padding: 0.65rem;
-    border-radius: 0.85rem;
-    background: rgba(20, 20, 24, 0.92);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    backdrop-filter: blur(14px);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-    overflow-y: auto;
-    overscroll-behavior: contain;
-}
-.mpv-controls__popover[hidden] {
-    display: none;
-}
-.mpv-controls__popover-title {
-    font-size: 0.7rem;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: rgba(255, 255, 255, 0.6);
-}
-.mpv-controls__popover-subtitle {
-    margin-top: 0.5rem;
-    font-size: 0.68rem;
-    font-weight: 500;
-    color: rgba(255, 255, 255, 0.55);
-}
-.mpv-controls__popover-options {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.35rem;
-    margin-top: 0.4rem;
-}
-.mpv-controls__popover-option {
-    min-height: 32px;
-    padding: 0 0.6rem;
-    border-radius: 0.5rem;
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    background: transparent;
-    color: #fff;
-    font-size: 0.8rem;
-    cursor: pointer;
-    transition: background-color 150ms, border-color 150ms, color 150ms;
-}
-.mpv-controls__popover-option:hover,
-.mpv-controls__popover-option:focus-visible {
-    background: rgba(255, 255, 255, 0.12);
-}
-.mpv-controls__popover-option:focus-visible {
-    outline: 2px solid var(--color-accent);
-    outline-offset: 2px;
-}
-.mpv-controls__popover-option[aria-checked="true"] {
-    border-color: var(--color-accent);
+/* Native menus (audio/subtitles/gear) replace the old HTML popover; only bar-level state remains. */
+.mpv-controls__btn[aria-pressed="true"] {
     color: var(--color-accent);
 }
-[data-perf-mode="on"] .mpv-controls__popover-option {
-    transition: none;
+.mpv-controls__badge {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    padding: 0 0.3rem;
+    border-radius: 9999px;
+    background: var(--color-accent);
+    color: #fff;
+    font-size: 0.6rem;
+    font-weight: 600;
+    line-height: 1.3;
 }
-@media (prefers-reduced-motion: reduce) {
-    .mpv-controls__popover-option {
-        transition: none;
-    }
-}
-.mpv-controls__popover-row {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.75rem;
-    margin-top: 0.4rem;
-}
-.mpv-controls__popover-row [data-role="subdelay-value"] {
-    min-width: 3.5rem;
-    text-align: center;
-    font-size: 0.8rem;
-    font-variant-numeric: tabular-nums;
+.mpv-controls__dot {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 6px;
+    height: 6px;
+    border-radius: 9999px;
+    background: var(--color-accent);
 }
 
 /* Cast dialogs: top-layer / high-z, so the body-level glide ring can't reach them */

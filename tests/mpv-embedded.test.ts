@@ -187,8 +187,22 @@ describe("boundsEqual", () => {
 })
 
 describe("cssRectToNativeVideoHoleVars", () => {
-  it("maps a CSS rect to px custom properties with a zero radius when omitted", () => {
-    expect(cssRectToNativeVideoHoleVars({ x: 10, y: 20, width: 300, height: 200 })).toEqual({
+  it("maps a CSS rect to owner-relative px custom properties with a zero radius when omitted", () => {
+    expect(
+      cssRectToNativeVideoHoleVars({ x: 10, y: 20, width: 300, height: 200 }, { x: 0, y: 0 }),
+    ).toEqual({
+      "--xt-video-x": "10px",
+      "--xt-video-y": "20px",
+      "--xt-video-w": "300px",
+      "--xt-video-h": "200px",
+      "--xt-video-r": "0px",
+    })
+  })
+
+  it("subtracts the owner rect so the vars are relative to it, not the viewport", () => {
+    expect(
+      cssRectToNativeVideoHoleVars({ x: 110, y: 220, width: 300, height: 200 }, { x: 100, y: 200 }),
+    ).toEqual({
       "--xt-video-x": "10px",
       "--xt-video-y": "20px",
       "--xt-video-w": "300px",
@@ -199,7 +213,10 @@ describe("cssRectToNativeVideoHoleVars", () => {
 
   it("preserves fractional values and reads a CSS pixel radius", () => {
     expect(
-      cssRectToNativeVideoHoleVars({ x: 10.5, y: 20.25, width: 300.75, height: 200.1, radius: "12px" }),
+      cssRectToNativeVideoHoleVars(
+        { x: 10.5, y: 20.25, width: 300.75, height: 200.1, radius: "12px" },
+        { x: 0, y: 0 },
+      ),
     ).toEqual({
       "--xt-video-x": "10.5px",
       "--xt-video-y": "20.25px",
@@ -525,11 +542,13 @@ describe("shouldReloadForStall", () => {
 })
 
 describe("subtitleStyleToMpvProperties", () => {
-  it("maps the default style", () => {
+  it("maps the default style, sub-ass-override always at scale", () => {
     expect(subtitleStyleToMpvProperties(DEFAULT_MPV_SUBTITLE_STYLE)).toEqual({
       "sub-scale": 1,
       "sub-pos": 100,
       "sub-color": "#FFFFFF",
+      "sub-ass-override": "scale",
+      "sub-ass-style-overrides": "",
     })
   })
 
@@ -538,12 +557,37 @@ describe("subtitleStyleToMpvProperties", () => {
       "sub-scale": 0.8,
       "sub-pos": 80,
       "sub-color": "#FFFF00",
+      "sub-ass-override": "scale",
+      "sub-ass-style-overrides": "PrimaryColour=&H0000FFFF",
     })
     expect(subtitleStyleToMpvProperties({ size: "xlarge", position: "bottom", color: "white" })).toEqual({
       "sub-scale": 1.5,
       "sub-pos": 100,
       "sub-color": "#FFFFFF",
+      "sub-ass-override": "scale",
+      "sub-ass-style-overrides": "",
     })
+  })
+
+  it("yields the PrimaryColour ASS override for yellow, regardless of size", () => {
+    expect(
+      subtitleStyleToMpvProperties({ size: "normal", position: "bottom", color: "yellow" })["sub-ass-style-overrides"],
+    ).toBe("PrimaryColour=&H0000FFFF")
+  })
+
+  it("yields an empty ASS override for white, clearing the script's own style", () => {
+    expect(
+      subtitleStyleToMpvProperties({ size: "normal", position: "raised", color: "white" })["sub-ass-style-overrides"],
+    ).toBe("")
+  })
+
+  it("never touches the colour fields when only the size changes", () => {
+    const small = subtitleStyleToMpvProperties({ size: "small", position: "bottom", color: "white" })
+    const large = subtitleStyleToMpvProperties({ size: "large", position: "bottom", color: "white" })
+    expect(small["sub-color"]).toBe(large["sub-color"])
+    expect(small["sub-ass-style-overrides"]).toBe(large["sub-ass-style-overrides"])
+    expect(small["sub-ass-override"]).toBe("scale")
+    expect(large["sub-ass-override"]).toBe("scale")
   })
 })
 

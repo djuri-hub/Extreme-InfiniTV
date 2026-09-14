@@ -55,6 +55,31 @@ describe("parseMpvAudioTracks", () => {
     const trackList = [{ id: "not-a-number", type: "audio" }, { type: "audio" }]
     expect(parseMpvAudioTracks(trackList, null)).toEqual([])
   })
+
+  it("appends codec and channel layout after the language", () => {
+    const trackList = [{ id: 1, type: "audio", lang: "en", codec: "ac3", "demux-channel-count": 6 }]
+    expect(parseMpvAudioTracks(trackList, null, "en")[0].label).toBe("English · AC-3 5.1")
+  })
+
+  it("appends flags (default, forced, external) after language/codec", () => {
+    const trackList = [
+      { id: 1, type: "audio", lang: "en", default: true },
+      { id: 2, type: "audio", lang: "de", external: true },
+    ]
+    const tracks = parseMpvAudioTracks(trackList, null, "en")
+    expect(tracks[0].label).toBe("English · Default")
+    expect(tracks[1].label).toBe("German · File")
+  })
+
+  it("appends the title only when it adds information beyond the language", () => {
+    const trackList = [
+      { id: 1, type: "audio", lang: "en", title: "Commentary" },
+      { id: 2, type: "audio", lang: "en", title: "English" },
+    ]
+    const tracks = parseMpvAudioTracks(trackList, null, "en")
+    expect(tracks[0].label).toBe("English (Commentary)")
+    expect(tracks[1].label).toBe("English")
+  })
 })
 
 describe("parseMpvSubtitleTracks", () => {
@@ -94,6 +119,18 @@ describe("parseMpvSubtitleTracks", () => {
   it("skips entries without a valid numeric id", () => {
     const trackList = [{ id: "not-a-number", type: "sub" }, { type: "sub" }]
     expect(parseMpvSubtitleTracks(trackList, null)).toEqual([])
+  })
+
+  it("appends the SDH/visual-impaired/forced flags after the language", () => {
+    const trackList = [
+      { id: 1, type: "sub", lang: "en", "hearing-impaired": true },
+      { id: 2, type: "sub", lang: "en", "visual-impaired": true },
+      { id: 3, type: "sub", lang: "en", forced: true },
+    ]
+    const tracks = parseMpvSubtitleTracks(trackList, null, "en")
+    expect(tracks[0].label).toBe("English · SDH")
+    expect(tracks[1].label).toBe("English · Visual impaired")
+    expect(tracks[2].label).toBe("English · Forced")
   })
 })
 

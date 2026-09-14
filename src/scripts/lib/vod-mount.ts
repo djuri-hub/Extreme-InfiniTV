@@ -6,6 +6,7 @@ import {
   playWhenReady,
   desktopPlatform,
   isWindows,
+  isNativeVideoBackend,
   type VjsLikeHandle,
 } from "@/scripts/lib/player-runtime.ts"
 import { prepareVodPlayback, prepareLocalVodPlayback, type VodProxySession } from "@/scripts/lib/vod-proxy.ts"
@@ -35,12 +36,15 @@ import {
   createRemuxFailureHandler,
   handlePlayerStartError,
   attachVodStallWatchdog,
+  attachNativeVodStallWatchdog,
 } from "@/scripts/lib/vod-remux-recovery.ts"
 import {
   chooseAudioTrackId,
   rememberAudioTrack,
   type TrackMemoryContext,
 } from "@/scripts/lib/track-memory.ts"
+
+type SrcOptions = Parameters<VjsLikeHandle["src"]>[0]
 
 export interface VodMountOptions {
   logTag: string
@@ -105,6 +109,8 @@ export interface VodMountOptions {
 /** Container plan, player mount, resume-seek, remux/audio-switcher setup, stall watchdog, and progress/ended listeners. */
 export async function mountVodPlayback(options: VodMountOptions): Promise<void> {
   const mountStartedAt = Date.now()
+  // mpv demuxes everything itself; the remux and tee-proxy paths are MSE-only.
+  const nativeBackend = isNativeVideoBackend(options.backend)
   const trackMemory: TrackMemoryContext | null =
     options.trackMemory !== undefined
       ? options.trackMemory
@@ -115,15 +121,21 @@ export async function mountVodPlayback(options: VodMountOptions): Promise<void> 
             id: String(options.contentId),
           }
         : null
-  const remuxAvailable = await vodAudioRemuxAvailable()
+  const remuxAvailable = nativeBackend ? false : await vodAudioRemuxAvailable()
   const remuxContentKey = buildRemuxContentKey(options.remuxContentKind, options.contentId)
-  const forceRemux = options.playlistId ? isRemuxPinnedContent(options.playlistId, remuxContentKey) : false
+  const forceRemux = nativeBackend
+    ? false
+    : options.playlistId
+      ? isRemuxPinnedContent(options.playlistId, remuxContentKey)
+      : false
   const containerPlanEnv: VodContainerPlanEnv = { isTauriDesktop: desktopPlatform, isWindows, remuxAvailable, forceRemux }
   let playSrc = options.playSrc
   let mimeFallbackSrc = options.mimeFallbackSrc
-  let containerPlan: VodContainerPlan = options.localDownloadPath
-    ? planLocalVodContainerPlayback(options.localDownloadPath, containerPlanEnv)
-    : planVodContainerPlayback(playSrc, containerPlanEnv)
+  let containerPlan: VodContainerPlan = nativeBackend
+    ? { mode: "direct" }
+    : options.localDownloadPath
+      ? planLocalVodContainerPlayback(options.localDownloadPath, containerPlanEnv)
+      : planVodContainerPlayback(playSrc, containerPlanEnv)
   let resolvedContainer: "mkv" | "mp4" | null = null
 
   if (containerPlan.mode === "unsupported" && containerPlan.container === "avi" && !options.localDownloadPath) {
@@ -238,19 +250,31 @@ export async function mountVodPlayback(options: VodMountOptions): Promise<void> 
     log.info("[xt:vod-mount] first loadedmetadata", { elapsedMs: Date.now() - mountStartedAt })
   })
 
-  if (options.resumePos > 0 && !remuxOwnsInitialMount) {
+  const resumeSeekEligible = options.resumePos > 0 && !remuxOwnsInitialMount
+  // Past 95% restarts fresh instead of resuming.
+  function isResumeNearCompletion(durationSeconds: number): boolean {
+    return durationSeconds > 0 && options.resumePos / durationSeconds >= 0.95
+  }
+
+  if (resumeSeekEligible && !nativeBackend) {
     mountedPlayer.one?.("loadedmetadata", () => {
       if (options.isStale()) return
       const dur = mountedPlayer.duration?.() || options.savedProgress?.duration || 0
-      if (dur === 0 || options.resumePos / dur < 0.95) {
+      if (!isResumeNearCompletion(dur)) {
         try { mountedPlayer.currentTime?.(options.resumePos) } catch {}
       }
     })
   }
+  const nativeResumeStartSeconds =
+    resumeSeekEligible && nativeBackend && !isResumeNearCompletion(options.savedProgress?.duration || 0)
+      ? options.resumePos
+      : undefined
 
   // A local .mkv rides the same tee proxy, fed from its on-disk path since ffmpeg only speaks http/pipe/tcp.
   let prepared: VodProxySession | null
-  if (remuxOwnsInitialMount && options.localDownloadPath) {
+  if (nativeBackend) {
+    prepared = { playbackUrl: playSrc, mkvSession: null }
+  } else if (remuxOwnsInitialMount && options.localDownloadPath) {
     prepared = await prepareLocalVodPlayback(options.localDownloadPath)
     if (options.isStale()) {
       prepared?.mkvSession?.stop()
@@ -366,8 +390,8 @@ export async function mountVodPlayback(options: VodMountOptions): Promise<void> 
   // An automatic remux retry continues the same tune's session instead of opening a new one.
   options.beginInsightsSession(options.isAutomaticRetry)
   // Captured so the stall watchdog can re-issue the identical mount to recover a stuck download.
-  function mountEmbeddedSrc() {
-    mountedPlayer.src({
+  function mountEmbeddedSrc(startSeconds?: number) {
+    const srcOptions = {
       src: preparedPlayback.playbackUrl,
       type: mime,
       isLive: false,
@@ -375,19 +399,32 @@ export async function mountVodPlayback(options: VodMountOptions): Promise<void> 
       audio: initialAudioSource,
       title: options.title,
       trackMemory,
-    })
+      ...(startSeconds != null ? { startSeconds } : {}),
+    } as SrcOptions
+    mountedPlayer.src(srcOptions)
   }
 
-  if (!remuxOwnsInitialMount) mountEmbeddedSrc()
-  const stallVideoEl = mountedPlayer.getMediaElement?.()
-  options.replaceStallWatchdog(attachVodStallWatchdog(stallVideoEl, {
-    logTag: options.logTag,
-    player: mountedPlayer,
-    remuxOwnsInitialMount,
-    isAudioSwitcherRecovering: () => ownAudioSwitcher?.isRecovering() ?? false,
-    recoverRemuxStall: () => ownAudioSwitcher?.recoverRemuxStall(),
-    mountEmbeddedSrc,
-  }))
+  if (!remuxOwnsInitialMount) mountEmbeddedSrc(nativeResumeStartSeconds)
+  if (nativeBackend) {
+    options.replaceStallWatchdog(attachNativeVodStallWatchdog({
+      logTag: options.logTag,
+      player: mountedPlayer,
+      recoverStall: () => {
+        mountedPlayer.pause()
+        void mountedPlayer.play()
+      },
+    }))
+  } else {
+    const stallVideoEl = mountedPlayer.getMediaElement?.()
+    options.replaceStallWatchdog(attachVodStallWatchdog(stallVideoEl, {
+      logTag: options.logTag,
+      player: mountedPlayer,
+      remuxOwnsInitialMount,
+      isAudioSwitcherRecovering: () => ownAudioSwitcher?.isRecovering() ?? false,
+      recoverRemuxStall: () => ownAudioSwitcher?.recoverRemuxStall(),
+      mountEmbeddedSrc,
+    }))
+  }
   if (options.playerWrap) options.setQualityChipDetach(attachQualityChip(options.playerWrap, mountedPlayer))
   options.applyVideoScale()
 

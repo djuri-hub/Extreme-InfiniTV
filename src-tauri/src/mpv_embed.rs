@@ -40,17 +40,17 @@ use tokio::sync::{oneshot, Notify};
 use crate::external_player;
 
 #[cfg(target_os = "windows")]
-use windows::core::{BOOL, PCWSTR};
+use windows::core::{BOOL, PCWSTR, PWSTR};
 #[cfg(target_os = "windows")]
-use windows::Win32::Foundation::{ERROR_PIPE_BUSY, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{ERROR_PIPE_BUSY, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 #[cfg(target_os = "windows")]
 use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMNCRENDERINGPOLICY, DWMNCRP_DISABLED, DWMWA_NCRENDERING_POLICY,
 };
 #[cfg(target_os = "windows")]
 use windows::Win32::Graphics::Gdi::{
-    ExcludeClipRect, FillRect, GetMonitorInfoW, GetStockObject, GetWindowDC, MonitorFromWindow, ReleaseDC,
-    BLACK_BRUSH, HBRUSH, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    ClientToScreen, ExcludeClipRect, FillRect, GetMonitorInfoW, GetStockObject, GetWindowDC, MonitorFromWindow,
+    ReleaseDC, BLACK_BRUSH, HBRUSH, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
 #[cfg(target_os = "windows")]
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -68,6 +68,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WMSZ_BOTTOMLEFT, WMSZ_LEFT, WMSZ_TOP, WMSZ_TOPLEFT, WMSZ_TOPRIGHT,
     WNDCLASSEXW, WS_CAPTION, WS_CLIPCHILDREN, WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME, WS_EX_STATICEDGE,
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_WINDOWEDGE, WS_POPUP, WS_THICKFRAME, WS_VISIBLE,
+};
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::WindowsAndMessaging::{
+    CreatePopupMenu, DestroyMenu, GetCursorPos, GetMenuItemCount, InsertMenuItemW, SetForegroundWindow,
+    TrackPopupMenuEx, HMENU, MENUITEMINFOW, MENU_ITEM_MASK, MENU_ITEM_STATE, MENU_ITEM_TYPE, MFS_CHECKED,
+    MFS_DISABLED, MFS_ENABLED, MFT_RADIOCHECK, MFT_SEPARATOR, MFT_STRING, MIIM_FTYPE, MIIM_ID, MIIM_STATE,
+    MIIM_STRING, MIIM_SUBMENU, TPMPARAMS, TPM_LEFTALIGN, TPM_RETURNCMD, TPM_TOPALIGN, TPM_VERTICAL,
 };
 
 #[cfg(target_os = "windows")]
@@ -160,6 +167,40 @@ pub struct PipGeometry {
     pub y: i32,
     pub width: i32,
     pub height: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MenuItemKind {
+    Item,
+    Checkbox,
+    Radio,
+    Separator,
+    Submenu,
+    Title,
+}
+
+/// A native Win32 popup menu entry; `submenu` builds a nested popup for `kind: "submenu"`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MenuItem {
+    pub id: Option<u32>,
+    pub kind: MenuItemKind,
+    pub title: Option<String>,
+    #[serde(default)]
+    pub checked: bool,
+    #[serde(default)]
+    pub disabled: bool,
+    pub submenu: Option<Vec<MenuItem>>,
+}
+
+/// Anchor rect in the same physical-pixel client space as `Bounds`; menu shows at its bottom-left.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct MenuAnchor {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
 /// The single owner of mpv's native surface: where it's parented and whether it's shown.
@@ -758,6 +799,15 @@ fn cache_range_from_state(state: &Value) -> (Value, Value) {
     (min_start.map_or(Value::Null, |value| json!(value)), max_end.map_or(Value::Null, |value| json!(value)))
 }
 
+/// String args off a `client-message` event (as sent by mpv's `script-message` command).
+fn client_message_args(parsed: &Value) -> Vec<String> {
+    parsed
+        .get("args")
+        .and_then(Value::as_array)
+        .map(|args| args.iter().filter_map(|arg| arg.as_str().map(str::to_string)).collect())
+        .unwrap_or_default()
+}
+
 // Updates the metrics apply_surface reads and wakes the surface task to recompute placement.
 #[cfg(target_os = "windows")]
 fn update_video_metrics(session: &Arc<MpvSession>, name: &str, value: &Value) {
@@ -800,7 +850,7 @@ fn handle_mpv_event(app: &AppHandle, session: &Arc<MpvSession>, emit_state: &Arc
     }
 
     let kind = match event_name {
-        "file-loaded" | "end-file" | "playback-restart" | "start-file" => event_name,
+        "file-loaded" | "end-file" | "playback-restart" | "start-file" | "client-message" => event_name,
         "log-message" => "log",
         _ => return,
     };
@@ -814,6 +864,9 @@ fn handle_mpv_event(app: &AppHandle, session: &Arc<MpvSession>, emit_state: &Arc
     if kind == "end-file" {
         let http_status = *session.last_http_status.lock().unwrap_or_else(|poison| poison.into_inner());
         payload["httpStatus"] = json!(http_status);
+    }
+    if kind == "client-message" {
+        payload["args"] = json!(client_message_args(parsed));
     }
     let _ = app.emit("xt:mpv-event", payload);
 }
@@ -876,7 +929,7 @@ const EXTRA_ARG_BLOCKLIST: &[&str] = &[
     "scripts", "scripts-append", "script", "terminal", "really-quiet", "quiet", "ytdl", "ontop", "fullscreen",
     "fs", "geometry", "autofit", "autofit-larger", "autofit-smaller", "border", "title", "force-media-title",
     "input-terminal", "gpu-context", "include", "input-conf", "stream-record", "stream-dump", "o", "of",
-    "record-file", "dump-stats",
+    "record-file", "dump-stats", "sub-use-margins", "sub-ass-force-margins",
 ];
 
 fn extra_mpv_arg_option_name(entry: &str) -> Option<&str> {
@@ -943,6 +996,7 @@ fn build_mpv_embed_args(wid: isize, pipe_name: &str, log_file: &str, config: &Mp
         "--audio-fallback-to-null=yes".to_string(),
         "--input-media-keys=no".to_string(),
         "--video-sync=display-resample".to_string(),
+        "--sub-use-margins=no".to_string(),
     ];
     args.extend(quality_profile_args(config.quality.as_deref()));
     if let Some(extra_args) = config.extra_args.as_deref() {
@@ -2046,6 +2100,155 @@ async fn set_window_fullscreen(app: AppHandle, enabled: bool) -> Result<(), Stri
 }
 
 // ---------------------------------------------------------------------------
+// Native context menu (mpv's own `context-menu` only pops at the cursor, so the HTML control
+// bar needs Win32 popups anchored to its own buttons instead)
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "windows")]
+fn to_wide_null(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// (fType, fState) for a menu item; kept free of any HMENU/HWND so it's unit-testable alone.
+#[cfg(target_os = "windows")]
+fn menu_item_flags(kind: MenuItemKind, checked: bool, disabled: bool) -> (MENU_ITEM_TYPE, MENU_ITEM_STATE) {
+    let ftype = if kind == MenuItemKind::Radio { MFT_STRING | MFT_RADIOCHECK } else { MFT_STRING };
+    let mut fstate = MFS_ENABLED;
+    if disabled || kind == MenuItemKind::Title {
+        fstate = fstate | MFS_DISABLED;
+    }
+    if checked && matches!(kind, MenuItemKind::Checkbox | MenuItemKind::Radio) {
+        fstate = fstate | MFS_CHECKED;
+    }
+    (ftype, fstate)
+}
+
+#[cfg(target_os = "windows")]
+fn append_menu_item(menu: HMENU, item: &MenuItem) -> Result<(), String> {
+    let mut wide_title = to_wide_null(item.title.as_deref().unwrap_or(""));
+    let mut info = MENUITEMINFOW { cbSize: std::mem::size_of::<MENUITEMINFOW>() as u32, ..Default::default() };
+
+    match item.kind {
+        MenuItemKind::Separator => {
+            info.fMask = MIIM_FTYPE;
+            info.fType = MFT_SEPARATOR;
+        }
+        MenuItemKind::Submenu => {
+            let submenu = build_popup_menu(item.submenu.as_deref().unwrap_or(&[]))?;
+            info.fMask = MIIM_STRING | MIIM_SUBMENU | MIIM_FTYPE | MIIM_STATE;
+            info.fType = MFT_STRING;
+            info.fState = if item.disabled { MFS_DISABLED } else { MFS_ENABLED };
+            info.hSubMenu = submenu;
+            info.dwTypeData = PWSTR(wide_title.as_mut_ptr());
+            info.cch = (wide_title.len() as u32).saturating_sub(1);
+        }
+        kind => {
+            let id = item.id.unwrap_or(0);
+            if matches!(kind, MenuItemKind::Item | MenuItemKind::Checkbox | MenuItemKind::Radio) && id == 0 {
+                return Err("OTHER:menu item requires a positive id".to_string());
+            }
+            let (ftype, fstate) = menu_item_flags(kind, item.checked, item.disabled);
+            info.fMask = MIIM_STRING | MIIM_FTYPE | MIIM_STATE | if id > 0 { MIIM_ID } else { MENU_ITEM_MASK(0) };
+            info.fType = ftype;
+            info.fState = fstate;
+            info.wID = id;
+            info.dwTypeData = PWSTR(wide_title.as_mut_ptr());
+            info.cch = (wide_title.len() as u32).saturating_sub(1);
+        }
+    }
+
+    let position = unsafe { GetMenuItemCount(Some(menu)) }.max(0) as u32;
+    unsafe { InsertMenuItemW(menu, position, true, &info) }.map_err(|error| format!("OTHER:{error}"))
+}
+
+#[cfg(target_os = "windows")]
+fn build_popup_menu(items: &[MenuItem]) -> Result<HMENU, String> {
+    let menu = unsafe { CreatePopupMenu() }.map_err(|error| format!("OTHER:{error}"))?;
+    for item in items {
+        if let Err(error) = append_menu_item(menu, item) {
+            unsafe {
+                let _ = DestroyMenu(menu);
+            }
+            return Err(error);
+        }
+    }
+    Ok(menu)
+}
+
+/// Runs on the main thread (`TrackPopupMenuEx` pumps its own modal loop, so blocking here is fine).
+#[cfg(target_os = "windows")]
+fn track_popup_menu(hwnd: HWND, menu: HMENU, anchor: Option<MenuAnchor>) -> Result<Option<u32>, String> {
+    unsafe {
+        let _ = SetForegroundWindow(hwnd);
+    }
+    let flags = (TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_VERTICAL).0;
+    let (x, y, exclude) = match anchor {
+        Some(anchor) => {
+            let mut origin = POINT { x: anchor.x.round() as i32, y: anchor.y.round() as i32 };
+            unsafe {
+                let _ = ClientToScreen(hwnd, &mut origin);
+            }
+            let rect = RECT {
+                left: origin.x,
+                top: origin.y,
+                right: origin.x + anchor.width.round() as i32,
+                bottom: origin.y + anchor.height.round() as i32,
+            };
+            (rect.left, rect.bottom, Some(rect))
+        }
+        None => {
+            let mut cursor = POINT::default();
+            unsafe { GetCursorPos(&mut cursor) }.map_err(|error| format!("OTHER:{error}"))?;
+            (cursor.x, cursor.y, None)
+        }
+    };
+    let params = exclude.map(|rect| TPMPARAMS { cbSize: std::mem::size_of::<TPMPARAMS>() as u32, rcExclude: rect });
+    let command = unsafe { TrackPopupMenuEx(menu, flags, x, y, hwnd, params.as_ref().map(|value| value as *const _)) };
+    let picked = command.0 as u32;
+    Ok((picked != 0).then_some(picked))
+}
+
+#[cfg(target_os = "windows")]
+fn show_context_menu_on_main_thread(
+    app: &AppHandle,
+    items: &[MenuItem],
+    anchor: Option<MenuAnchor>,
+) -> Result<Option<u32>, String> {
+    let main_window = app.get_webview_window("main").ok_or_else(|| "OTHER:main window unavailable".to_string())?;
+    let hwnd = main_window.hwnd().map_err(|error| format!("OTHER:{error}"))?;
+    let menu = build_popup_menu(items)?;
+    let result = track_popup_menu(hwnd, menu, anchor);
+    unsafe {
+        let _ = DestroyMenu(menu);
+    }
+    result
+}
+
+#[cfg(target_os = "windows")]
+async fn show_context_menu(
+    app: AppHandle,
+    state: State<'_, MpvEmbedState>,
+    session_id: String,
+    items: Vec<MenuItem>,
+    anchor: Option<MenuAnchor>,
+) -> Result<Option<u32>, String> {
+    get_session(&state, &session_id)?;
+    let app_for_menu = app.clone();
+    run_on_main_thread_and_wait(&app, move || show_context_menu_on_main_thread(&app_for_menu, &items, anchor)).await?
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn show_context_menu(
+    _app: AppHandle,
+    _state: State<'_, MpvEmbedState>,
+    _session_id: String,
+    _items: Vec<MenuItem>,
+    _anchor: Option<MenuAnchor>,
+) -> Result<Option<u32>, String> {
+    Err(platform_unsupported())
+}
+
+// ---------------------------------------------------------------------------
 // Session lifecycle
 // ---------------------------------------------------------------------------
 
@@ -2535,6 +2738,17 @@ async fn run_mpv_command(
 }
 
 #[tauri::command]
+pub async fn mpv_embed_show_menu(
+    app: AppHandle,
+    state: State<'_, MpvEmbedState>,
+    session_id: String,
+    items: Vec<MenuItem>,
+    anchor: Option<MenuAnchor>,
+) -> Result<Option<u32>, String> {
+    show_context_menu(app, state, session_id, items, anchor).await
+}
+
+#[tauri::command]
 pub async fn mpv_embed_set_property(
     state: State<'_, MpvEmbedState>,
     session_id: String,
@@ -2791,6 +3005,7 @@ mod tests {
                 "--audio-fallback-to-null=yes".to_string(),
                 "--input-media-keys=no".to_string(),
                 "--video-sync=display-resample".to_string(),
+                "--sub-use-margins=no".to_string(),
             ]
         );
     }
@@ -3049,6 +3264,18 @@ mod tests {
         let frame = classify_ipc_frame(r#"{"event":"file-loaded"}"#);
         match frame {
             MpvIpcFrame::Event(value) => assert_eq!(value["event"], "file-loaded"),
+            _ => panic!("expected an event frame"),
+        }
+    }
+
+    #[test]
+    fn classify_ipc_frame_recognizes_a_client_message_and_extracts_its_args() {
+        let frame = classify_ipc_frame(r#"{"event":"client-message","args":["xt-menu","audio","2"]}"#);
+        match frame {
+            MpvIpcFrame::Event(value) => {
+                assert_eq!(value["event"], "client-message");
+                assert_eq!(client_message_args(&value), vec!["xt-menu", "audio", "2"]);
+            }
             _ => panic!("expected an event frame"),
         }
     }
@@ -3563,5 +3790,43 @@ mod tests {
     #[test]
     fn should_exit_pip_is_true_when_active() {
         assert!(should_exit_pip(true));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn menu_item_flags_plain_item_is_enabled_string_with_no_extra_bits() {
+        let (ftype, fstate) = menu_item_flags(MenuItemKind::Item, false, false);
+        assert_eq!(ftype, MFT_STRING);
+        assert_eq!(fstate, MFS_ENABLED);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn menu_item_flags_radio_sets_radiocheck_and_checked_state() {
+        let (ftype, fstate) = menu_item_flags(MenuItemKind::Radio, true, false);
+        assert_eq!(ftype, MFT_STRING | MFT_RADIOCHECK);
+        assert_eq!(fstate, MFS_CHECKED);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn menu_item_flags_checkbox_sets_checked_without_radiocheck() {
+        let (ftype, fstate) = menu_item_flags(MenuItemKind::Checkbox, true, false);
+        assert_eq!(ftype, MFT_STRING);
+        assert_eq!(fstate, MFS_CHECKED);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn menu_item_flags_disabled_item_sets_disabled_state() {
+        let (_, fstate) = menu_item_flags(MenuItemKind::Item, false, true);
+        assert_eq!(fstate, MFS_DISABLED);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn menu_item_flags_title_is_always_disabled() {
+        let (_, fstate) = menu_item_flags(MenuItemKind::Title, false, false);
+        assert_eq!(fstate, MFS_DISABLED);
     }
 }

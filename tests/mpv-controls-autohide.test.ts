@@ -77,17 +77,23 @@ describe("mpv control bar auto-hide", () => {
     teardown()
   })
 
-  it("keeps the bar up while the settings popover is open", () => {
+  it("keeps the bar up while a native menu is open, then resumes auto-hide once it closes", async () => {
     const container = document.createElement("div")
     document.body.appendChild(container)
     const handle = makeHandle()
-    const teardown = mountMpvControls(container, handle as never)
+    let resolveMenu!: () => void
+    const teardown = mountMpvControls(container, handle as never, {
+      onSettingsMenuClick: () =>
+        new Promise<void>((resolve) => {
+          resolveMenu = resolve
+        }),
+    })
     const bar = container.querySelector<HTMLElement>(".mpv-controls")!
     bar.querySelector<HTMLButtonElement>('[data-role="settings"]')!.click()
-    vi.advanceTimersByTime(5000)
+    await vi.advanceTimersByTimeAsync(5000)
     expect(bar.dataset.visible).toBe("true")
-    bar.querySelector<HTMLButtonElement>('[data-role="settings"]')!.click()
-    vi.advanceTimersByTime(3500)
+    resolveMenu()
+    await vi.advanceTimersByTimeAsync(3500)
     expect(bar.dataset.visible).toBe("false")
     teardown()
   })

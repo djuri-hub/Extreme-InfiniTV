@@ -3,6 +3,7 @@
 import { t } from "@/scripts/lib/i18n.js"
 import { escapeHtml, formatPaddedHms, formatElapsedSinceStart } from "@/scripts/lib/format.js"
 import { mpvTrackChoiceAvailable } from "@/scripts/lib/mpv-tracks.js"
+import { formatPlaybackRate, PLAYBACK_RATES } from "@/scripts/lib/mpv-menu.js"
 import { toastSuccess, toastError } from "@/scripts/lib/toast.js"
 import { log } from "@/scripts/lib/log.js"
 import {
@@ -19,7 +20,6 @@ import {
   ICON_ARROWS_MINIMIZE,
 } from "@/scripts/lib/icons.js"
 import type { VjsLikeHandle } from "@/scripts/lib/player-runtime.js"
-import type { MpvSubtitleStyle } from "@/scripts/lib/mpv-embedded.js"
 
 // Local icons: this file doesn't own icons.ts, so PiP/camera/gear are kept here (same Tabler outline style).
 const wrapIcon = (paths: string): string =>
@@ -62,7 +62,6 @@ const DEFAULT_AUTO_HIDE_MS = 3000
 const SINGLE_CLICK_DELAY_MS = 250
 const SCREENSHOT_FEEDBACK_MS = 250
 const LIVE_BEHIND_THRESHOLD_SECONDS = 3
-const AUDIO_DELAY_STEP_SECONDS = 0.05
 
 export function seekFraction(currentTimeSeconds: number, durationSeconds: number): number {
   if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return 0
@@ -113,11 +112,7 @@ export function formatBehindLive(secondsBehind: number): string {
   return `-${formatPaddedHms(clamped)}`
 }
 
-export const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2] as const
-
-export function formatPlaybackRate(rate: number): string {
-  return `${rate}x`
-}
+export { PLAYBACK_RATES, formatPlaybackRate }
 
 export interface AutoHideState {
   visible: boolean
@@ -187,48 +182,17 @@ export function mpvHotkeyAction(input: MpvHotkeyInput): MpvHotkeyAction | null {
 }
 
 export interface MpvControlsOptions {
-  onAudioTracksClick?: () => void
-  onSubtitleTracksClick?: () => void
+  /** Opens the native "Audio" menu anchored to the clicked button. */
+  onAudioTracksClick?: (anchorElement: HTMLElement) => void | Promise<void>
+  /** Opens the native subtitles menu anchored to the button. */
+  onSubtitleTracksClick?: (anchorElement: HTMLElement) => void | Promise<void>
+  /** Opens the native root menu anchored to the gear. */
+  onSettingsMenuClick?: (anchorElement: HTMLElement) => void | Promise<void>
   autoHideMs?: number
   getTrackList?: () => unknown
 }
 
-const SUBTITLE_SIZE_OPTIONS: Array<{ value: MpvSubtitleStyle["size"]; labelKey: string }> = [
-  { value: "small", labelKey: "player.mpv.subtitleStyle.sizeSmall" },
-  { value: "normal", labelKey: "player.mpv.subtitleStyle.sizeNormal" },
-  { value: "large", labelKey: "player.mpv.subtitleStyle.sizeLarge" },
-  { value: "xlarge", labelKey: "player.mpv.subtitleStyle.sizeXLarge" },
-]
-const SUBTITLE_POSITION_OPTIONS: Array<{ value: MpvSubtitleStyle["position"]; labelKey: string }> = [
-  { value: "bottom", labelKey: "player.mpv.subtitleStyle.positionBottom" },
-  { value: "raised", labelKey: "player.mpv.subtitleStyle.positionRaised" },
-]
-const SUBTITLE_COLOR_OPTIONS: Array<{ value: MpvSubtitleStyle["color"]; labelKey: string }> = [
-  { value: "white", labelKey: "player.mpv.subtitleStyle.colorWhite" },
-  { value: "yellow", labelKey: "player.mpv.subtitleStyle.colorYellow" },
-]
-
-function radioOptionsHtml(options: Array<{ value: string; labelKey: string }>, dataRole: string): string {
-  return options
-    .map(
-      ({ value, labelKey }) =>
-        `<button type="button" class="mpv-controls__popover-option" role="radio" aria-checked="false"
-      data-role="${dataRole}" data-value="${value}">${escapeHtml(t(labelKey))}</button>`,
-    )
-    .join("")
-}
-
 function markup(): string {
-  const speedOptionsHtml = PLAYBACK_RATES.map((rate) => {
-    const label = formatPlaybackRate(rate)
-    return `<button type="button" class="mpv-controls__popover-option" role="radio" aria-checked="false"
-      data-role="speed-btn" data-rate="${rate}"
-      aria-label="${escapeHtml(t("player.controls.speedOption", { value: label }))}">${label}</button>`
-  }).join("")
-  const substyleSizeHtml = radioOptionsHtml(SUBTITLE_SIZE_OPTIONS, "substyle-size-btn")
-  const substylePositionHtml = radioOptionsHtml(SUBTITLE_POSITION_OPTIONS, "substyle-position-btn")
-  const substyleColorHtml = radioOptionsHtml(SUBTITLE_COLOR_OPTIONS, "substyle-color-btn")
-
   return `
     <div class="mpv-controls__buffer-bar" data-role="buffer-bar" role="status"
       aria-label="${escapeHtml(t("stream.buffering"))}" hidden></div>
@@ -257,55 +221,17 @@ function markup(): string {
         <span class="mpv-controls__rec-dot" aria-hidden="true"></span><span data-role="rec-time">0:00</span>
       </span>
       <span class="grow"></span>
-      <button type="button" class="mpv-controls__btn text-lg" data-role="subtitles"
+      <button type="button" class="mpv-controls__btn text-lg" data-role="subtitles" aria-pressed="false"
         aria-label="${escapeHtml(t("player.subtitles"))}" title="${escapeHtml(t("player.subtitles"))}" hidden>${ICON_BADGE_CC}</button>
-      <button type="button" class="mpv-controls__btn text-lg" data-role="audio"
+      <button type="button" class="mpv-controls__btn text-lg" data-role="audio" aria-pressed="false"
         aria-label="${escapeHtml(t("player.audio"))}" title="${escapeHtml(t("player.audio"))}" hidden>${ICON_LANGUAGE}</button>
       <button type="button" class="mpv-controls__btn text-lg" data-role="record" aria-pressed="false" hidden></button>
-      <div class="relative" data-role="settings-wrap">
-        <button type="button" class="mpv-controls__btn text-lg" data-role="settings" aria-haspopup="true" aria-expanded="false"
-          aria-label="${escapeHtml(t("player.controls.settings"))}" title="${escapeHtml(t("player.controls.settings"))}">${ICON_SETTINGS}</button>
-        <div class="mpv-controls__popover" data-role="settings-popover" role="menu"
-          aria-label="${escapeHtml(t("player.controls.settings"))}" hidden>
-          <div data-role="speed-section">
-            <div class="mpv-controls__popover-title" data-role="speed-title">${escapeHtml(t("player.controls.speed"))}</div>
-            <div class="mpv-controls__popover-options" data-role="speed-options" role="radiogroup"
-              aria-label="${escapeHtml(t("player.controls.speed"))}">${speedOptionsHtml}</div>
-          </div>
-          <div data-role="subtitle-delay-section" hidden>
-            <div class="mpv-controls__popover-title" data-role="subdelay-title">${escapeHtml(t("player.controls.subtitleDelay"))}</div>
-            <div class="mpv-controls__popover-row">
-              <button type="button" class="mpv-controls__btn" data-role="subdelay-minus"
-                aria-label="${escapeHtml(t("player.controls.subtitleDelayEarlier"))}" title="${escapeHtml(t("player.controls.subtitleDelayEarlier"))}">-</button>
-              <span data-role="subdelay-value">+0.0s</span>
-              <button type="button" class="mpv-controls__btn" data-role="subdelay-plus"
-                aria-label="${escapeHtml(t("player.controls.subtitleDelayLater"))}" title="${escapeHtml(t("player.controls.subtitleDelayLater"))}">+</button>
-            </div>
-          </div>
-          <div data-role="subtitle-style-section" hidden>
-            <div class="mpv-controls__popover-title" data-role="substyle-title">${escapeHtml(t("player.mpv.subtitleStyle.title"))}</div>
-            <div class="mpv-controls__popover-subtitle">${escapeHtml(t("player.mpv.subtitleStyle.size"))}</div>
-            <div class="mpv-controls__popover-options" data-role="substyle-size-options" role="radiogroup"
-              aria-label="${escapeHtml(t("player.mpv.subtitleStyle.size"))}">${substyleSizeHtml}</div>
-            <div class="mpv-controls__popover-subtitle">${escapeHtml(t("player.mpv.subtitleStyle.position"))}</div>
-            <div class="mpv-controls__popover-options" data-role="substyle-position-options" role="radiogroup"
-              aria-label="${escapeHtml(t("player.mpv.subtitleStyle.position"))}">${substylePositionHtml}</div>
-            <div class="mpv-controls__popover-subtitle">${escapeHtml(t("player.mpv.subtitleStyle.color"))}</div>
-            <div class="mpv-controls__popover-options" data-role="substyle-color-options" role="radiogroup"
-              aria-label="${escapeHtml(t("player.mpv.subtitleStyle.color"))}">${substyleColorHtml}</div>
-          </div>
-          <div data-role="audiodelay-section" hidden>
-            <div class="mpv-controls__popover-title" data-role="audiodelay-title">${escapeHtml(t("player.mpv.audioDelay.label"))}</div>
-            <div class="mpv-controls__popover-row">
-              <button type="button" class="mpv-controls__btn" data-role="audiodelay-minus"
-                aria-label="${escapeHtml(t("player.mpv.audioDelay.label"))}">-</button>
-              <span data-role="audiodelay-value">0 ms</span>
-              <button type="button" class="mpv-controls__btn" data-role="audiodelay-plus"
-                aria-label="${escapeHtml(t("player.mpv.audioDelay.label"))}">+</button>
-            </div>
-          </div>
-        </div>
-      </div>
+      <button type="button" class="mpv-controls__btn text-lg relative" data-role="settings"
+        aria-label="${escapeHtml(t("player.controls.settings"))}" title="${escapeHtml(t("player.controls.settings"))}">
+        ${ICON_SETTINGS}
+        <span class="mpv-controls__badge" data-role="settings-badge" hidden></span>
+        <span class="mpv-controls__dot" data-role="settings-dot" aria-hidden="true" hidden></span>
+      </button>
       <button type="button" class="mpv-controls__btn text-lg" data-role="screenshot"
         aria-label="${escapeHtml(t("player.controls.screenshot"))}" title="${escapeHtml(t("player.controls.screenshot"))}">${ICON_CAMERA}</button>
       <button type="button" class="mpv-controls__btn text-lg" data-role="pip" aria-pressed="false"
@@ -331,10 +257,6 @@ function isHotkeyIgnoredTarget(target: EventTarget | null): boolean {
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || tag === "BUTTON") return true
   if (typeof element.closest === "function" && element.closest("dialog[open]")) return true
   return false
-}
-
-function formatSubDelay(offsetSeconds: number): string {
-  return `${offsetSeconds >= 0 ? "+" : ""}${offsetSeconds.toFixed(1)}s`
 }
 
 /** Mounts the control bar into `container` (the player wrap, already `position: relative`). */
@@ -377,47 +299,48 @@ export function mountMpvControls(
   const audioBtn = query<HTMLButtonElement>("audio")
   const screenshotBtn = query<HTMLButtonElement>("screenshot")
   const pipBtn = query<HTMLButtonElement>("pip")
-  const settingsWrap = query<HTMLElement>("settings-wrap")
   const settingsBtn = query<HTMLButtonElement>("settings")
-  const settingsPopover = query<HTMLElement>("settings-popover")
-  const speedSection = query<HTMLElement>("speed-section")
-  const speedOptionsEl = query<HTMLElement>("speed-options")
-  const subtitleDelaySection = query<HTMLElement>("subtitle-delay-section")
-  const subDelayValueEl = query("subdelay-value")
-  const subDelayMinusBtn = query<HTMLButtonElement>("subdelay-minus")
-  const subDelayPlusBtn = query<HTMLButtonElement>("subdelay-plus")
-  const subtitleStyleSection = query<HTMLElement>("subtitle-style-section")
-  const substyleSizeOptions = query<HTMLElement>("substyle-size-options")
-  const substylePositionOptions = query<HTMLElement>("substyle-position-options")
-  const substyleColorOptions = query<HTMLElement>("substyle-color-options")
-  const audioDelaySection = query<HTMLElement>("audiodelay-section")
-  const audioDelayValueEl = query("audiodelay-value")
-  const audioDelayMinusBtn = query<HTMLButtonElement>("audiodelay-minus")
-  const audioDelayPlusBtn = query<HTMLButtonElement>("audiodelay-plus")
+  const settingsBadge = query("settings-badge")
+  const settingsDot = query("settings-dot")
 
   errorRetryBtn.textContent = t("common.retry")
 
-  if (options.onSubtitleTracksClick) subtitlesBtn.addEventListener("click", options.onSubtitleTracksClick)
-  if (options.onAudioTracksClick) audioBtn.addEventListener("click", options.onAudioTracksClick)
   if (!handle.requestFullscreen) fullscreenBtn.hidden = true
   if (!handle.requestWebFullscreen) webFullscreenBtn.hidden = true
   if (typeof handle.screenshot !== "function") screenshotBtn.hidden = true
   if (typeof handle.requestPip !== "function") pipBtn.hidden = true
   const speedAvailable = typeof handle.playbackRate === "function"
   const subtitleDelayCapable = typeof handle.subtitleDelay === "function"
-  const subtitleStyleCapable = typeof handle.subtitleStyle === "function"
   const audioDelayCapable = typeof handle.audioDelay === "function"
   const recordingAvailable = typeof handle.startRecording === "function" && typeof handle.stopRecording === "function"
-  speedSection.hidden = !speedAvailable
-  subtitleStyleSection.hidden = !subtitleStyleCapable
-  audioDelaySection.hidden = !audioDelayCapable
-  if (!speedAvailable && !subtitleDelayCapable && !subtitleStyleCapable && !audioDelayCapable) settingsBtn.hidden = true
+  if (!options.onSettingsMenuClick) settingsBtn.hidden = true
   if (!recordingAvailable) recordBtn.hidden = true
 
   function updateTrackButtonsUi(): void {
     const trackList = options.getTrackList?.() ?? null
     audioBtn.hidden = !options.onAudioTracksClick || !mpvTrackChoiceAvailable(trackList, "audio")
-    subtitlesBtn.hidden = !options.onSubtitleTracksClick || !mpvTrackChoiceAvailable(trackList, "sub")
+    // Zero tracks still needs the menu: it is the only way to load a subtitle file.
+    subtitlesBtn.hidden = !options.onSubtitleTracksClick
+    updateTrackPressedUi()
+  }
+
+  function updateTrackPressedUi(): void {
+    const audioTracks = handle.listAudioTracks?.() ?? []
+    const activeAudioIndex = audioTracks.findIndex((track) => track.selected)
+    audioBtn.setAttribute("aria-pressed", String(activeAudioIndex > 0))
+    const subtitleTracks = handle.listSubtitleTracks?.() ?? []
+    subtitlesBtn.setAttribute("aria-pressed", String(subtitleTracks.some((track) => track.selected)))
+  }
+
+  function updateSettingsIndicatorUi(): void {
+    const rate = speedAvailable ? (handle.playbackRate?.() as number | undefined) ?? 1 : 1
+    const speedChanged = speedAvailable && Math.abs(rate - 1) > 0.001
+    settingsBadge.hidden = !speedChanged
+    if (speedChanged) settingsBadge.textContent = formatPlaybackRate(rate)
+
+    const subtitleDelay = subtitleDelayCapable ? handle.subtitleDelay?.(0) ?? 0 : 0
+    const audioDelayValue = audioDelayCapable ? handle.audioDelay?.() ?? 0 : 0
+    settingsDot.hidden = subtitleDelay === 0 && audioDelayValue === 0
   }
 
   const autoHideMs = options.autoHideMs ?? DEFAULT_AUTO_HIDE_MS
@@ -433,14 +356,13 @@ export function mountMpvControls(
   let recordingStopPending = false
 
   function applyHideState(): void {
-    const popoverOpen = !settingsPopover.hidden
-    const visible = hideState.visible || externalActive || popoverOpen
+    const visible = hideState.visible || externalActive
     bar.dataset.visible = String(visible)
     if (hideTimer) {
       clearTimeout(hideTimer)
       hideTimer = null
     }
-    if (visible && !hideState.paused && !hideState.focused && !externalActive && !popoverOpen) {
+    if (visible && !hideState.paused && !hideState.focused && !externalActive) {
       hideTimer = setTimeout(() => dispatch("timeout"), autoHideMs)
     }
   }
@@ -533,47 +455,6 @@ export function mountMpvControls(
     pipBtn.title = label
   }
 
-  function updateSpeedOptionsUi(): void {
-    if (!speedAvailable) return
-    const current = (handle.playbackRate?.() as number | undefined) ?? 1
-    for (const btn of speedOptionsEl.querySelectorAll<HTMLButtonElement>('[data-role="speed-btn"]')) {
-      const rate = Number(btn.dataset.rate)
-      const active = Number.isFinite(current) && Math.abs(rate - current) < 0.001
-      btn.setAttribute("aria-checked", String(active))
-    }
-  }
-
-  function updateSubtitleDelayUi(): void {
-    if (!subtitleDelayCapable) {
-      subtitleDelaySection.hidden = true
-      return
-    }
-    const offset = handle.subtitleDelay?.(0) ?? null
-    subtitleDelaySection.hidden = offset == null
-    if (offset != null) subDelayValueEl.textContent = formatSubDelay(offset)
-  }
-
-  function updateSubtitleStyleUi(): void {
-    if (!subtitleStyleCapable) return
-    const style = handle.subtitleStyle?.()
-    if (!style) return
-    setRadioGroupChecked(substyleSizeOptions, style.size)
-    setRadioGroupChecked(substylePositionOptions, style.position)
-    setRadioGroupChecked(substyleColorOptions, style.color)
-  }
-
-  function setRadioGroupChecked(groupEl: HTMLElement, activeValue: string): void {
-    for (const btn of groupEl.querySelectorAll<HTMLButtonElement>('button[role="radio"]')) {
-      btn.setAttribute("aria-checked", String(btn.dataset.value === activeValue))
-    }
-  }
-
-  function updateAudioDelayUi(overrideSeconds?: number): void {
-    if (!audioDelayCapable) return
-    const current = overrideSeconds ?? handle.audioDelay?.() ?? 0
-    audioDelayValueEl.textContent = t("player.mpv.audioDelay.value", { ms: String(Math.round(current * 1000)) })
-  }
-
   function updateLiveBadgeUi(isLive: boolean): void {
     liveBadge.hidden = !isLive
     if (!isLive) return
@@ -590,7 +471,8 @@ export function mountMpvControls(
   function updateRecordingUi(): void {
     if (!recordingAvailable) return
     const isLive = currentIsLiveHint() === true
-    const recordingPath = isLive ? (handle.recordingPath?.() ?? null) : null
+    recordBtn.hidden = !isLive
+    const recordingPath = isLive ? handle.recordingPath?.() ?? null : null
     const recording = recordingPath != null
     if (recording) lastRecordingPath = recordingPath
     if (lastRecordingUiState?.isLive === isLive && lastRecordingUiState.recording === recording) {
@@ -598,16 +480,6 @@ export function mountMpvControls(
       return
     }
     lastRecordingUiState = { isLive, recording }
-    recordBtn.hidden = !isLive
-    if (!isLive) {
-      recReadout.hidden = true
-      if (recTimer) {
-        clearInterval(recTimer)
-        recTimer = null
-      }
-      recordingStartedAt = null
-      return
-    }
     recordBtn.setAttribute("aria-pressed", String(recording))
     recordBtn.innerHTML = recording ? ICON_PLAYER_STOP : ICON_RECORD_DOT
     recordBtn.classList.toggle("mpv-controls__btn--recording", recording)
@@ -898,98 +770,29 @@ export function mountMpvControls(
   seekWrap.addEventListener("pointermove", updateSeekTooltip)
   seekWrap.addEventListener("pointerleave", () => { seekTooltipEl.hidden = true })
 
-  // --- Settings popover: playback speed + subtitle delay ---
-  function popoverFocusable(): HTMLElement[] {
-    return Array.from(settingsPopover.querySelectorAll<HTMLElement>("button")).filter((el) => el.offsetParent !== null)
-  }
-  function onOutsidePointerDown(event: PointerEvent): void {
-    if (settingsWrap.contains(event.target as Node | null)) return
-    closeSettingsPopover(false)
-  }
-  function onPopoverKeydown(event: KeyboardEvent): void {
-    if (event.key === "Escape") {
-      event.preventDefault()
-      closeSettingsPopover()
-      return
+  // Keep the bar up while a native menu is open.
+  async function onMenuTrigger(
+    opener: ((anchorElement: HTMLElement) => void | Promise<void>) | undefined,
+    anchorElement: HTMLElement,
+  ): Promise<void> {
+    if (!opener) return
+    setExternalActive(true)
+    try {
+      await opener(anchorElement)
+    } finally {
+      setExternalActive(false)
     }
-    if (event.key !== "ArrowUp" && event.key !== "ArrowDown" && event.key !== "ArrowLeft" && event.key !== "ArrowRight") return
-    const focusable = popoverFocusable()
-    if (!focusable.length) return
-    event.preventDefault()
-    const currentIndex = focusable.indexOf(document.activeElement as HTMLElement)
-    const delta = event.key === "ArrowUp" || event.key === "ArrowLeft" ? -1 : 1
-    focusable[(currentIndex + delta + focusable.length) % focusable.length]?.focus()
-  }
-  function openSettingsPopover(): void {
-    updateSpeedOptionsUi()
-    updateSubtitleDelayUi()
-    updateSubtitleStyleUi()
-    updateAudioDelayUi()
-    settingsPopover.hidden = false
-    settingsBtn.setAttribute("aria-expanded", "true")
-    dispatch("activity")
-    document.addEventListener("pointerdown", onOutsidePointerDown, true)
-    document.addEventListener("keydown", onPopoverKeydown, true)
-    popoverFocusable()[0]?.focus()
-  }
-  function closeSettingsPopover(returnFocus = true): void {
-    if (settingsPopover.hidden) return
-    settingsPopover.hidden = true
-    settingsBtn.setAttribute("aria-expanded", "false")
-    document.removeEventListener("pointerdown", onOutsidePointerDown, true)
-    document.removeEventListener("keydown", onPopoverKeydown, true)
-    if (returnFocus) settingsBtn.focus()
     dispatch("activity")
   }
-  settingsBtn.addEventListener("click", () => {
-    if (settingsPopover.hidden) openSettingsPopover()
-    else closeSettingsPopover()
-  })
-  speedOptionsEl.addEventListener("click", (event) => {
-    const btn = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-role="speed-btn"]')
-    if (!btn || !handle.playbackRate) return
-    const rate = Number(btn.dataset.rate)
-    if (!Number.isFinite(rate)) return
-    handle.playbackRate?.(rate)
-    updateSpeedOptionsUi()
-    closeSettingsPopover()
-  })
-  subDelayMinusBtn.addEventListener("click", () => {
-    const next = handle.subtitleDelay?.(-0.1)
-    if (next != null) subDelayValueEl.textContent = formatSubDelay(next)
-    dispatch("activity")
-  })
-  subDelayPlusBtn.addEventListener("click", () => {
-    const next = handle.subtitleDelay?.(0.1)
-    if (next != null) subDelayValueEl.textContent = formatSubDelay(next)
-    dispatch("activity")
-  })
-  function onSubtitleStyleOptionClick(event: MouseEvent, patch: (value: string) => Partial<MpvSubtitleStyle>): void {
-    const btn = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-value]")
-    if (!btn?.dataset.value || !handle.subtitleStyle) return
-    handle.subtitleStyle(patch(btn.dataset.value))
-    updateSubtitleStyleUi()
-    dispatch("activity")
+  if (options.onSubtitleTracksClick) {
+    subtitlesBtn.addEventListener("click", () => void onMenuTrigger(options.onSubtitleTracksClick, subtitlesBtn))
   }
-  substyleSizeOptions.addEventListener("click", (event) =>
-    onSubtitleStyleOptionClick(event, (value) => ({ size: value as MpvSubtitleStyle["size"] })),
-  )
-  substylePositionOptions.addEventListener("click", (event) =>
-    onSubtitleStyleOptionClick(event, (value) => ({ position: value as MpvSubtitleStyle["position"] })),
-  )
-  substyleColorOptions.addEventListener("click", (event) =>
-    onSubtitleStyleOptionClick(event, (value) => ({ color: value as MpvSubtitleStyle["color"] })),
-  )
-  audioDelayMinusBtn.addEventListener("click", () => {
-    const next = handle.audioDelay?.(-AUDIO_DELAY_STEP_SECONDS)
-    updateAudioDelayUi(next)
-    dispatch("activity")
-  })
-  audioDelayPlusBtn.addEventListener("click", () => {
-    const next = handle.audioDelay?.(AUDIO_DELAY_STEP_SECONDS)
-    updateAudioDelayUi(next)
-    dispatch("activity")
-  })
+  if (options.onAudioTracksClick) {
+    audioBtn.addEventListener("click", () => void onMenuTrigger(options.onAudioTracksClick, audioBtn))
+  }
+  if (options.onSettingsMenuClick) {
+    settingsBtn.addEventListener("click", () => void onMenuTrigger(options.onSettingsMenuClick, settingsBtn))
+  }
 
   function onPlaying(): void {
     updatePlayPauseUi()
@@ -1034,7 +837,15 @@ export function mountMpvControls(
   }
   function onTracksChanged(): void {
     updateTrackButtonsUi()
-    updateSubtitleDelayUi()
+  }
+  function onTrackSelectionChanged(): void {
+    updateTrackPressedUi()
+  }
+  function onDelayChange(): void {
+    updateSettingsIndicatorUi()
+  }
+  function onRateChange(): void {
+    updateSettingsIndicatorUi()
   }
   // Producers pulse true on a timer and never send false: activity, not a sticky pin.
   function onUserActive(...args: unknown[]): void {
@@ -1066,9 +877,11 @@ export function mountMpvControls(
   handle.on("canplay", onCanPlay)
   handle.on("durationchange", onDurationChange)
   handle.on("volumechange", updateVolumeUi)
-  handle.on("ratechange", updateSpeedOptionsUi)
+  handle.on("ratechange", onRateChange)
   handle.on("error", onError)
   handle.on("trackschanged", onTracksChanged)
+  handle.on("trackselectionchanged", onTrackSelectionChanged)
+  handle.on("delaychange", onDelayChange)
   handle.on("useractive", onUserActive)
   handle.on("recordingchange", onRecordingChange)
   handle.on("webfullscreenchange", onWebFullscreenChange)
@@ -1164,15 +977,11 @@ export function mountMpvControls(
   updatePipUi()
   updatePlaybackUi()
   updateTrackButtonsUi()
-  updateSpeedOptionsUi()
-  updateSubtitleDelayUi()
-  updateSubtitleStyleUi()
-  updateAudioDelayUi()
+  updateSettingsIndicatorUi()
   applyHideState()
 
   return () => {
     clearClickTimer()
-    closeSettingsPopover(false)
     dragStrip?.remove()
     if (screenshotFeedbackTimer) clearTimeout(screenshotFeedbackTimer)
     if (hideTimer) clearTimeout(hideTimer)
@@ -1189,9 +998,11 @@ export function mountMpvControls(
     handle.off?.("canplay", onCanPlay)
     handle.off?.("durationchange", onDurationChange)
     handle.off?.("volumechange", updateVolumeUi)
-    handle.off?.("ratechange", updateSpeedOptionsUi)
+    handle.off?.("ratechange", onRateChange)
     handle.off?.("error", onError)
     handle.off?.("trackschanged", onTracksChanged)
+    handle.off?.("trackselectionchanged", onTrackSelectionChanged)
+    handle.off?.("delaychange", onDelayChange)
     handle.off?.("useractive", onUserActive)
     handle.off?.("recordingchange", onRecordingChange)
     handle.off?.("webfullscreenchange", onWebFullscreenChange)

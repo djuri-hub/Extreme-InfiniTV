@@ -73,6 +73,12 @@ import {
   getContentLanguage,
   getUserAgent,
   VIDEO_SCALE_EVENT,
+  getPlayerPath,
+  getExternalPlayerPref,
+  EXTERNAL_PLAYER_BACKENDS,
+  getRememberedAndroidPlayer,
+  setRememberedAndroidPlayer,
+  clearRememberedAndroidPlayer,
 } from "@/scripts/lib/app-settings.js"
 import { fetchSeasonEnrichment, peekCachedSeasonEnrichment } from "@/scripts/lib/tmdb-enrich.ts"
 import { resolveTitleEnrichmentDetailed, peekEarlyTitleEnrichment } from "@/scripts/lib/enrichment.ts"
@@ -111,12 +117,22 @@ import {
   mountPlayer,
   getExternalLauncher,
   subscribeExternalPlayerExit,
-  isNativeVideoBackend,
+  androidExternalAvailable,
+  externalPlayersAvailable,
+  listAndroidVideoPlayerApps,
+  openStreamInAndroidPackage,
+  androidMimeForUrl,
 } from "@/scripts/lib/player-runtime.ts"
 import { beginExternalSession, externalSrcKey } from "@/scripts/lib/external-progress.ts"
-import { toast } from "@/scripts/lib/toast.js"
-import { setupExternalPlayerButton, surfaceLaunchErrorFallback } from "@/scripts/lib/external-player-button.ts"
+import { toast, toastError } from "@/scripts/lib/toast.js"
+import {
+  setupExternalPlayerButton,
+  surfaceLaunchErrorFallback,
+  surfaceAndroidHandoffError,
+} from "@/scripts/lib/external-player-button.ts"
 import { setupPlayOnTvButton } from "@/scripts/lib/play-on-tv-button.ts"
+import { openAndroidPlayerPicker } from "@/scripts/lib/player-picker-dialog.ts"
+import { pickExternalPlayer } from "@/scripts/lib/external-player-choice-dialog.ts"
 import { createVideoScaleController } from "@/scripts/lib/video-scale.ts"
 import { openVideoScaleDialog, videoScaleModeLabelKey } from "@/scripts/lib/video-scale-dialog.ts"
 import { createSubtitleDelayController } from "@/scripts/lib/subtitle-delay-dialog.ts"
@@ -288,6 +304,105 @@ function episodeMenuTitle(ep) {
   return ep.title || t("series.episode.fallback", { n: ep.episode_num || "" })
 }
 
+function desktopExternalKinds() {
+  return EXTERNAL_PLAYER_BACKENDS.filter((kind) => getPlayerPath(kind))
+}
+
+function externalPlayerLabel(kind) {
+  const playerName = kind === "vlc" ? "VLC" : String(kind).toUpperCase()
+  const localized = t("settings.playback.openIn", { player: playerName })
+  return localized && localized !== "settings.playback.openIn" ? localized : `Open in ${playerName}`
+}
+
+function openInPlayerLabel() {
+  const localized = t("settings.playback.openInSystem")
+  return localized && localized !== "settings.playback.openInSystem" ? localized : "Open in player…"
+}
+
+// Desktop escape hatch: reuses launchExternalPlayback, prompting via the
+// choice dialog when "ask each time" and multiple players are configured.
+async function launchEpisodeExternally(ep, src, desktopKind) {
+  try { vjs?.pause?.() } catch {}
+  let kind = desktopKind
+  if (!kind) {
+    const chosen = await pickExternalPlayer(desktopExternalKinds(), { subtitle: episodeMenuTitle(ep) || undefined })
+    if (!chosen) return
+    kind = chosen
+  }
+  const saved = activePlaylistId ? getProgress(activePlaylistId, "episode", ep.id) : null
+  const resumeSeconds = saved && !saved.completed && saved.position > RESUME_MIN_SECONDS ? saved.position : 0
+  try {
+    await launchExternalPlayback(kind, src, resumeSeconds, ep)
+  } catch (error) {
+    surfaceLaunchErrorFallback(error, kind, "[xt:series-detail]")
+  }
+}
+
+// Android escape hatch: mirrors external-player-button.ts's "system" flow -
+// remembered app first, else the in-app picker (chooser routing is unreliable).
+async function launchEpisodeOnAndroid(ep, src) {
+  try { vjs?.pause?.() } catch {}
+  const title = episodeMenuTitle(ep)
+  const mime = androidMimeForUrl(src)
+  const apps = listAndroidVideoPlayerApps(src, mime)
+  if (apps.length === 0) {
+    toastError(
+      t("settings.playback.androidNoHandler") ||
+        "No app on this device can play this stream. Install VLC or MX Player."
+    )
+    return
+  }
+  const remembered = getRememberedAndroidPlayer()
+  if (remembered) {
+    const stillInstalled = apps.find((app) => app.pkg === remembered.pkg)
+    if (stillInstalled) {
+      toast({
+        title:
+          t("settings.playback.launching", { player: stillInstalled.label || stillInstalled.pkg }) ||
+          `Launching ${stillInstalled.label || stillInstalled.pkg}…`,
+        duration: 2000,
+      })
+      try {
+        await openStreamInAndroidPackage(stillInstalled.pkg, src, {
+          activity: stillInstalled.activity || remembered.activity || null,
+          title,
+          mime,
+        })
+      } catch (error) {
+        surfaceAndroidHandoffError(error, "system")
+      }
+      return
+    }
+    clearRememberedAndroidPlayer()
+  }
+  const choice = await openAndroidPlayerPicker({ apps, contentTitle: title })
+  if (!choice) return
+  const { app: pickedApp, remember } = choice
+  if (remember) {
+    setRememberedAndroidPlayer({
+      pkg: pickedApp.pkg,
+      activity: pickedApp.activity,
+      label: pickedApp.label || pickedApp.pkg,
+      icon: pickedApp.icon,
+    })
+  }
+  toast({
+    title:
+      t("settings.playback.launching", { player: pickedApp.label || pickedApp.pkg }) ||
+      `Launching ${pickedApp.label || pickedApp.pkg}…`,
+    duration: 2000,
+  })
+  try {
+    await openStreamInAndroidPackage(pickedApp.pkg, src, {
+      activity: pickedApp.activity || null,
+      title,
+      mime,
+    })
+  } catch (error) {
+    surfaceAndroidHandoffError(error, "system")
+  }
+}
+
 function openEpisodeMenu(ep, anchor, point) {
   closeEpisodeMenu()
   const url = buildEpisodeStreamUrl(ep)
@@ -342,6 +457,32 @@ function openEpisodeMenu(ep, anchor, point) {
       }
     )
   )
+
+  if (androidExternalAvailable) {
+    menu.appendChild(
+      makeEpisodeMenuItem(openInPlayerLabel(), () => {
+        launchEpisodeOnAndroid(ep, url)
+      })
+    )
+  } else if (externalPlayersAvailable) {
+    const configuredKinds = desktopExternalKinds()
+    if (configuredKinds.length > 1 && getExternalPlayerPref() !== "ask") {
+      for (const kind of configuredKinds) {
+        menu.appendChild(
+          makeEpisodeMenuItem(externalPlayerLabel(kind), () => {
+            launchEpisodeExternally(ep, url, kind)
+          })
+        )
+      }
+    } else if (configuredKinds.length > 0) {
+      const soloKind = configuredKinds.length === 1 ? configuredKinds[0] : null
+      menu.appendChild(
+        makeEpisodeMenuItem(soloKind ? externalPlayerLabel(soloKind) : openInPlayerLabel(), () => {
+          launchEpisodeExternally(ep, url, soloKind)
+        })
+      )
+    }
+  }
 
   menu.appendChild(
     makeEpisodeMenuItem(t("stream.menu.test"), () => {
@@ -1248,16 +1389,7 @@ async function populateSimilarRail(requestId) {
 // ----------------------------
 let vjs = null
 let focusKeeperCleanup: (() => void) | null = null
-let embeddedPlayerBackend = null
 let seriesInsights = null
-const heroWrap = document.getElementById("series-detail-hero")
-
-// Pins the player container in place while the embedded mpv window plays underneath it - see mpv-embedded.ts.
-function updateStickyPlayer() {
-  if (!heroWrap) return
-  if (vjs && isNativeVideoBackend(embeddedPlayerBackend)) heroWrap.dataset.stickyPlayer = "on"
-  else delete heroWrap.dataset.stickyPlayer
-}
 
 const inlineTrailer = createInlineTrailer({
   wrapEl: document.getElementById("series-detail-trailer-wrap"),
@@ -1433,12 +1565,10 @@ async function ensureEmbeddedPlayer(backend) {
   })
   if (mounted.kind !== "embedded") return null
   vjs = mounted.handle
-  embeddedPlayerBackend = mounted.backend
   if (mounted.backend === "videojs" || (mounted.backend === "mpv-embedded" && typeof vjs.userActive === "function")) {
     focusKeeperCleanup = attachPlayerFocusKeeper(vjs)
   }
   bindAutoPip(vjs)
-  updateStickyPlayer()
   vjs.el()?.addEventListener?.("xt:mpv-retry", () => { if (currentEpisode) playEpisode(currentEpisode) })
   return vjs
 }
@@ -1506,7 +1636,6 @@ function retirePreviousPlayback() {
   stallWatchdogDetach = null
   qualityChipDetach?.()
   qualityChipDetach = null
-  updateStickyPlayer()
 }
 
 async function playEpisode(episode, options = {}) {

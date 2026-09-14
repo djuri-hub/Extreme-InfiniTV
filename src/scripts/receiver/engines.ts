@@ -11,6 +11,7 @@ import {
 } from "@/scripts/lib/player-runtime"
 import { getPlayerBackend } from "@/scripts/lib/app-settings.js"
 import type { CastDescriptorV1 } from "@/scripts/lib/tv-cast-descriptor"
+import type { PlaybackControls } from "@/scripts/receiver/engine-select"
 import { t } from "@/scripts/lib/i18n.js"
 import { log } from "@/scripts/lib/log.js"
 import { parseDnsServer } from "@/scripts/lib/dns-config.ts"
@@ -85,6 +86,8 @@ export interface ReceiverEngine {
   control(action: ReceiverControlAction, seconds?: number): void
   setVolume(level: number, muted: boolean): void
   teardown(): void
+  /** Non-null only when the mounted engine exposes track/speed controls (embedded mpv). */
+  getPlaybackControls?(): PlaybackControls | null
 }
 
 export interface EmbeddedReceiverEngine extends ReceiverEngine {
@@ -173,6 +176,42 @@ async function resolveDescriptorDnsSrc(descriptor: CastDescriptorV1): Promise<st
   } catch (err) {
     log.warn("[xt:receiver] dns proxy wrap failed, using raw src:", err)
     return descriptor.src
+  }
+}
+
+interface TrackCapableHandle {
+  listAudioTracks?(): { id: number; label: string; selected: boolean }[]
+  listSubtitleTracks?(): { id: number; label: string; selected: boolean }[]
+  selectAudioTrack?(id: number): Promise<void>
+  selectSubtitleTrack?(id: number | null): Promise<void>
+}
+
+function adaptPlaybackControls(handle: VjsLikeHandle | null): PlaybackControls | null {
+  const capable = handle as (VjsLikeHandle & TrackCapableHandle) | null
+  if (
+    !capable ||
+    typeof capable.listAudioTracks !== "function" ||
+    typeof capable.listSubtitleTracks !== "function" ||
+    typeof capable.selectAudioTrack !== "function" ||
+    typeof capable.selectSubtitleTrack !== "function" ||
+    typeof capable.playbackRate !== "function"
+  ) {
+    return null
+  }
+  return {
+    listAudioTracks: () => capable.listAudioTracks!(),
+    listSubtitleTracks: () => capable.listSubtitleTracks!(),
+    selectAudioTrack: (id) => capable.selectAudioTrack!(id),
+    selectSubtitleTrack: (id) => capable.selectSubtitleTrack!(id),
+    getPlaybackRate: () => {
+      const rate = capable.playbackRate!()
+      return typeof rate === "number" ? rate : 1
+    },
+    setPlaybackRate: (value) => { capable.playbackRate!(value) },
+    onTracksChanged: (listener) => {
+      capable.on("trackschanged", listener)
+      return () => capable.off?.("trackschanged", listener)
+    },
   }
 }
 
@@ -718,6 +757,10 @@ export function createEmbeddedReceiverEngine(
 
     teardown(): void {
       teardownInternal(false)
+    },
+
+    getPlaybackControls(): PlaybackControls | null {
+      return adaptPlaybackControls(activeHandle)
     },
 
     showError(messageKey: string, technical?: string | null): void {
