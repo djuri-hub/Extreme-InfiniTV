@@ -122,6 +122,12 @@ export function t(key: string, params?: Record<string, string | number>): string
   })
 }
 
+/** Picks `${baseKey}One`/`${baseKey}Other` by count (English-only plural rule; other locales share the same two keys). */
+export function tCount(baseKey: string, count: number, params?: Record<string, string | number>): string {
+  const suffix = count === 1 ? "One" : "Other"
+  return t(`${baseKey}${suffix}`, { count, ...params })
+}
+
 export function getActiveLocale(): string {
   return activeCode
 }

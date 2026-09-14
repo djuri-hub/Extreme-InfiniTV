@@ -28,6 +28,11 @@ function editHrefFor(entry) {
     : `/login?edit=${encodeURIComponent(entry._id)}`
 }
 
+/** The playlist editor is a classic-only surface (see tv-routes.ts); custom playlists have no other edit path. */
+function editUnreachableOnTv(entry) {
+  return entry.type === "custom" && document.documentElement.dataset.tvUi === "1"
+}
+
 const COMPACT_ICON_ACTION_CLASS =
   "inline-flex items-center justify-center rounded-lg border border-line bg-bg h-8 w-8 text-fg-2 hover:bg-surface-2 hover:text-fg focus-visible:bg-surface-2 focus-visible:border-accent transition-colors outline-none"
 
@@ -287,19 +292,29 @@ export function renderPlaylistRow({
       await removeEntry(entry._id)
       if (onAfterRemove) await onAfterRemove()
     })
-    const edit = document.createElement("a")
-    edit.href = editHrefFor(entry)
-    edit.title = t("common.edit")
-    edit.setAttribute("aria-label", t("playlist.editAria", { title: entry.title }))
-    edit.className =
-      "shrink-0 self-center rounded-md size-10 p-0 text-fg-3 hover:text-fg hover:bg-surface focus:text-fg focus:bg-surface inline-flex items-center justify-center transition-colors outline-none"
-    edit.innerHTML = `<span class="inline-flex text-base">${ICON_PENCIL}</span>`
-    row.append(pick, info, edit, exportBtn, del)
+    if (editUnreachableOnTv(entry)) {
+      row.append(pick, info, exportBtn, del)
+    } else {
+      const edit = document.createElement("a")
+      edit.href = editHrefFor(entry)
+      edit.title = t("common.edit")
+      edit.setAttribute("aria-label", t("playlist.editAria", { title: entry.title }))
+      edit.className =
+        "shrink-0 self-center rounded-md size-10 p-0 text-fg-3 hover:text-fg hover:bg-surface focus:text-fg focus:bg-surface inline-flex items-center justify-center transition-colors outline-none"
+      edit.innerHTML = `<span class="inline-flex text-base">${ICON_PENCIL}</span>`
+      row.append(pick, info, edit, exportBtn, del)
+    }
   } else {
     row.append(pick, info)
   }
 
   outer.append(row, panel)
+  if (!isCompact && editUnreachableOnTv(entry)) {
+    const editNote = document.createElement("p")
+    editNote.className = "px-4 pb-2 text-2xs text-fg-3"
+    editNote.textContent = t("playlist.editOnOtherDevice")
+    outer.append(editNote)
+  }
   return outer
 }
 
@@ -609,13 +624,16 @@ function paintPlaylistHealthInto(panel, entry, opts = {}) {
     const actions = document.createElement("div")
     actions.className = "ms-auto inline-flex items-center gap-2"
 
-    const edit = document.createElement("a")
-    edit.href = editHrefFor(entry)
-    edit.dataset.role = "edit"
-    edit.title = t("playlist.editAria", { title: entry.title })
-    edit.setAttribute("aria-label", t("playlist.editAria", { title: entry.title }))
-    edit.className = COMPACT_ICON_ACTION_CLASS
-    edit.innerHTML = `<span class="inline-flex text-sm">${ICON_PENCIL}</span>`
+    const editUnreachable = editUnreachableOnTv(entry)
+    const edit = editUnreachable ? null : document.createElement("a")
+    if (edit) {
+      edit.href = editHrefFor(entry)
+      edit.dataset.role = "edit"
+      edit.title = t("playlist.editAria", { title: entry.title })
+      edit.setAttribute("aria-label", t("playlist.editAria", { title: entry.title }))
+      edit.className = COMPACT_ICON_ACTION_CLASS
+      edit.innerHTML = `<span class="inline-flex text-sm">${ICON_PENCIL}</span>`
+    }
 
     const exportBtn = buildExportButton(entry, true)
 
@@ -646,8 +664,16 @@ function paintPlaylistHealthInto(panel, entry, opts = {}) {
       if (onAfterRemove) await onAfterRemove()
     })
 
-    actions.append(edit, exportBtn, del)
+    if (edit) actions.append(edit, exportBtn, del)
+    else actions.append(exportBtn, del)
     footer.appendChild(actions)
+
+    if (editUnreachable) {
+      const editNote = document.createElement("p")
+      editNote.className = "w-full text-2xs text-fg-3"
+      editNote.textContent = t("playlist.editOnOtherDevice")
+      footer.appendChild(editNote)
+    }
   }
 
   if (supportsDiagnostic) {

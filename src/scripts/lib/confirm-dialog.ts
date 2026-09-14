@@ -27,17 +27,17 @@ export interface ConfirmDialogOptions {
 }
 
 const BUTTON_CLASS_DEFAULT =
-  "rounded-xl px-4 py-2 text-sm font-semibold bg-accent text-bg tv-focus-inset " +
+  "inline-flex items-center justify-center min-h-11 rounded-xl px-4 py-2 text-sm font-semibold bg-accent text-bg tv-focus-inset " +
   "hover:opacity-90 focus-visible:opacity-90 focus-visible:outline-none " +
   "focus-visible:ring-1 focus-visible:ring-accent"
 
 const BUTTON_CLASS_DESTRUCTIVE =
-  "rounded-xl px-4 py-2 text-sm font-semibold bg-bad text-bg tv-focus-inset " +
+  "inline-flex items-center justify-center min-h-11 rounded-xl px-4 py-2 text-sm font-semibold bg-bad text-bg tv-focus-inset " +
   "hover:opacity-90 focus-visible:opacity-90 focus-visible:outline-none " +
   "focus-visible:ring-1 focus-visible:ring-bad"
 
 function ensureDialog(): HTMLDialogElement {
-  if (dlg) return dlg
+  if (dlg && dlg.isConnected) return dlg
   const node = document.createElement("dialog")
   node.id = DIALOG_ID
   node.setAttribute("aria-labelledby", `${DIALOG_ID}-title`)
@@ -60,7 +60,7 @@ function ensureDialog(): HTMLDialogElement {
         <button
           data-role="cancel"
           type="button"
-          class="rounded-xl border border-line px-4 py-2 text-sm tv-focus-inset hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:border-accent"></button>
+          class="inline-flex items-center justify-center min-h-11 rounded-xl border border-line px-4 py-2 text-sm tv-focus-inset hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:border-accent"></button>
         <button
           data-role="confirm"
           type="button"

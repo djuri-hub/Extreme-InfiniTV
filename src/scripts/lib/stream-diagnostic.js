@@ -192,6 +192,8 @@ async function headOrGet(url, signal, logKind, options = {}) {
       latencyMs: Math.round(performance.now() - getStart),
       method: headInfo?.status ? "HEAD+GET" : "HEAD",
       error: String(getError?.message || getError),
+      // Web build only: a thrown TypeError from fetch is the CORS/mixed-content signature, not a dead stream.
+      blocked: !isTauri && getError?.name === "TypeError",
     }
   }
 }
@@ -201,7 +203,7 @@ export async function probeStreamHead(url, signal, logKind, options = {}) {
   if (signal?.aborted) return { ok: false, status: null, aborted: true }
   try {
     const result = await headOrGet(url, signal, logKind, options)
-    return { ok: !!result?.ok, status: result?.status ?? null }
+    return { ok: !!result?.ok, status: result?.status ?? null, blocked: !!result?.blocked }
   } catch (err) {
     return { ok: false, status: null, aborted: !!signal?.aborted || err?.name === "AbortError" }
   }

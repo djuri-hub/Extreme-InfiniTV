@@ -18,7 +18,7 @@ import { isProviderRejection, shouldRepinMirror } from "@/scripts/lib/stream-rej
 import { normalize, scoreNormMatch } from "@/scripts/lib/text.js"
 import { debounce } from "@/scripts/lib/debounce.js"
 import { t, initI18n, getActiveLocale } from "@/scripts/lib/i18n.js"
-import { cachedFetch, getCached, hydrate as hydrateCache } from "@/scripts/lib/cache.js"
+import { cachedFetch, getCached, hydrate as hydrateCache, invalidateEntry } from "@/scripts/lib/cache.js"
 import {
   ensureLoaded as ensurePrefsLoaded,
   isFavorite,
@@ -128,6 +128,7 @@ import {
 } from "@/scripts/lib/external-player-button.js"
 import { ICON_EXTERNAL_LINK, ICON_ALERT_TRIANGLE, ICON_DOTS, ICON_CHECK } from "@/scripts/lib/icons.js"
 import { openAddToCustomDialog } from "@/scripts/lib/add-to-custom-dialog.ts"
+import { confirmDialog } from "@/scripts/lib/confirm-dialog.ts"
 import {
   loadProgrammes,
   getProgrammesSync,
@@ -824,6 +825,47 @@ function openChannelDiagnostic(channel) {
   )
 }
 
+/** Re-fetches a custom playlist's resolved channels and repaints, keeping playback untouched. */
+async function refreshCustomChannels(focusChannelId) {
+  try {
+    const { ensureLive } = await import("@/scripts/lib/catalog.js")
+    const data = await ensureLive(creds, activePlaylistId)
+    indexDirectUrls(data)
+    categoryMap = null
+    paintChannels(data, false, 0, true)
+  } catch (err) {
+    log.warn("[xt:livetv] custom playlist refresh failed:", err)
+    return
+  }
+  if (focusChannelId == null) return
+  const idx = filtered.findIndex((row) => row.id === focusChannelId)
+  if (idx >= 0) focusByIdx(idx)
+}
+
+/** Finds the channel by id inside the queued doc mutation, hands it to `mutate`, then saves + refreshes on a real change. */
+async function mutateCustomChannel(channelId, mutate, focusChannelId) {
+  const playlistId = activePlaylistId
+  const { mutateCustomDoc } = await import("@/scripts/lib/custom-playlist.ts")
+  let nextDoc
+  try {
+    nextDoc = await mutateCustomDoc(playlistId, (doc) => {
+      const docChannel = doc.channels.find((item) => item.id === channelId)
+      if (!docChannel) {
+        toastError(t("editor.toastSaveFailed"))
+        return null
+      }
+      return mutate(doc, docChannel)
+    })
+  } catch {
+    toastError(t("editor.toastSaveFailed"))
+    return
+  }
+  if (!nextDoc) return
+  invalidateEntry(playlistId)
+  document.dispatchEvent(new CustomEvent("xt:entries-updated"))
+  await refreshCustomChannels(focusChannelId !== undefined ? focusChannelId : channelId)
+}
+
 let channelMenuEl = null
 const CHANNEL_MENU_ID = "xt-channel-menu"
 const MENU_ITEM_CLASS =
@@ -1001,6 +1043,117 @@ function openChannelMenu(channel, anchor, point) {
     separator.className = "my-1 h-px bg-line"
   }
 
+  // Curates order/name/logo/number/tvg-id straight from the channel row.
+  let moveUpItem = null
+  let moveDownItem = null
+  let editCustomItem = null
+  let deleteCustomItem = null
+  let customSeparator = null
+  if (isCustomHost(creds.host)) {
+    const sortMode = activePlaylistId ? getViewSort(activePlaylistId, "live") : "default"
+    if (sortMode === "default") {
+      // Displayed order only matches doc order with no search filter narrowing the list.
+      const searchActive = !!(searchEl?.value || "").trim()
+      const groupChannelIds = searchActive
+        ? []
+        : filtered.filter((row) => row.category === channel.category).map((row) => row.id)
+      const groupPosition = groupChannelIds.indexOf(channel.id)
+      const isFirstInGroup = groupPosition === 0
+      const isLastInGroup = groupPosition >= 0 && groupPosition === groupChannelIds.length - 1
+
+      if (searchActive || !isFirstInGroup) {
+        moveUpItem = document.createElement("button")
+        moveUpItem.type = "button"
+        moveUpItem.setAttribute("role", "menuitem")
+        moveUpItem.className = MENU_ITEM_CLASS
+        moveUpItem.textContent = t("stream.menu.moveUp")
+        moveUpItem.addEventListener("click", () => {
+          closeChannelMenu()
+          void mutateCustomChannel(channel.id, async (doc, docChannel) => {
+            const { moveChannelWithinGroup } = await import("@/scripts/lib/custom-playlist.ts")
+            return moveChannelWithinGroup(doc, docChannel.key, "up")
+          })
+        })
+      }
+
+      if (searchActive || !isLastInGroup) {
+        moveDownItem = document.createElement("button")
+        moveDownItem.type = "button"
+        moveDownItem.setAttribute("role", "menuitem")
+        moveDownItem.className = MENU_ITEM_CLASS
+        moveDownItem.textContent = t("stream.menu.moveDown")
+        moveDownItem.addEventListener("click", () => {
+          closeChannelMenu()
+          void mutateCustomChannel(channel.id, async (doc, docChannel) => {
+            const { moveChannelWithinGroup } = await import("@/scripts/lib/custom-playlist.ts")
+            return moveChannelWithinGroup(doc, docChannel.key, "down")
+          })
+        })
+      }
+    }
+
+    editCustomItem = document.createElement("button")
+    editCustomItem.type = "button"
+    editCustomItem.setAttribute("role", "menuitem")
+    editCustomItem.className = MENU_ITEM_CLASS
+    editCustomItem.textContent = t("stream.menu.editChannel")
+    editCustomItem.addEventListener("click", () => {
+      closeChannelMenu()
+      void (async () => {
+        const { loadCustomDoc } = await import("@/scripts/lib/custom-playlist.ts")
+        const doc = await loadCustomDoc(activePlaylistId)
+        const docChannel = doc.channels.find((item) => item.id === channel.id)
+        if (!docChannel) {
+          toastError(t("editor.toastSaveFailed"))
+          return
+        }
+        const { openCustomChannelEditDialog } = await import("@/scripts/lib/custom-channel-edit-dialog.ts")
+        const result = await openCustomChannelEditDialog({
+          channel: docChannel,
+          resolvedName: channel.name || "",
+          resolvedLogo: channel.logo ?? null,
+        })
+        if (!result) return
+        await mutateCustomChannel(channel.id, async (freshDoc, freshDocChannel) => {
+          const { setOverrides } = await import("@/scripts/lib/custom-playlist.ts")
+          return setOverrides(freshDoc, freshDocChannel.key, result.overrides)
+        })
+      })()
+    })
+
+    deleteCustomItem = document.createElement("button")
+    deleteCustomItem.type = "button"
+    deleteCustomItem.setAttribute("role", "menuitem")
+    deleteCustomItem.className = MENU_ITEM_CLASS
+    deleteCustomItem.textContent = t("stream.menu.deleteChannel")
+    deleteCustomItem.addEventListener("click", () => {
+      closeChannelMenu()
+      void (async () => {
+        const ok = await confirmDialog({
+          title: t("editor.removeChannel"),
+          message: t("editor.removeChannelConfirm", { name: channel.name || "" }),
+          confirmLabel: t("common.delete"),
+          destructive: true,
+        })
+        if (!ok) return
+        const currentIndex = filtered.findIndex((row) => row.id === channel.id)
+        const neighbor = filtered[currentIndex + 1] ?? filtered[currentIndex - 1] ?? null
+        await mutateCustomChannel(
+          channel.id,
+          async (doc, docChannel) => {
+            const { removeChannels } = await import("@/scripts/lib/custom-playlist.ts")
+            return removeChannels(doc, [docChannel.key])
+          },
+          neighbor ? neighbor.id : null
+        )
+      })()
+    })
+
+    customSeparator = document.createElement("div")
+    customSeparator.setAttribute("role", "separator")
+    customSeparator.className = "my-1 h-px bg-line"
+  }
+
   menu.append(
     playItem,
     testItem,
@@ -1009,7 +1162,12 @@ function openChannelMenu(channel, anchor, point) {
     ...(addToCustomItem ? [addToCustomItem] : []),
     ...(separator ? [separator] : []),
     ...(editItem ? [editItem] : []),
-    ...(hideItem ? [hideItem] : [])
+    ...(hideItem ? [hideItem] : []),
+    ...(customSeparator ? [customSeparator] : []),
+    ...(moveUpItem ? [moveUpItem] : []),
+    ...(moveDownItem ? [moveDownItem] : []),
+    ...(editCustomItem ? [editCustomItem] : []),
+    ...(deleteCustomItem ? [deleteCustomItem] : [])
   )
   document.body.appendChild(menu)
 

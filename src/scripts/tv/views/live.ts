@@ -3,10 +3,14 @@ import type { TvView, TvViewContext } from "@/scripts/tv/router"
 import { t, LOCALE_EVENT } from "@/scripts/lib/i18n"
 import { registerFocusSection, keepFocusedInView, remPx } from "@/scripts/tv/focus"
 import { releaseCachedImages } from "@/scripts/lib/img-cache.ts"
-import { getActiveEntry } from "@/scripts/lib/creds.js"
+import { getActiveEntry, isCustomHost } from "@/scripts/lib/creds.js"
 import { resolvePlaylistCreds } from "@/scripts/lib/tv-cast-live.js"
 import { readCachedLiveChannels } from "@/scripts/lib/live-catalog.ts"
 import { ensureLive } from "@/scripts/lib/catalog.js"
+import { invalidateEntry } from "@/scripts/lib/cache.js"
+import { mutateCustomDoc, removeChannels, moveChannelWithinGroup } from "@/scripts/lib/custom-playlist.ts"
+import { confirmDialog } from "@/scripts/lib/confirm-dialog.ts"
+import { toast } from "@/scripts/lib/toast"
 import {
   ensureLoaded as ensurePreferencesLoaded,
   getFavorites,
@@ -49,7 +53,7 @@ import { debounce } from "@/scripts/lib/debounce"
 import { ICON_SEARCH } from "@/scripts/lib/icons.js"
 import { playLive, playCatchup } from "@/scripts/tv/playback"
 import { attachLongPress, type LongPressHandle } from "@/scripts/tv/long-press.ts"
-import { createActionSheet, type ActionSheetHandle } from "@/scripts/tv/ui/action-sheet.ts"
+import { createActionSheet, type ActionSheetHandle, type ActionSheetItem } from "@/scripts/tv/ui/action-sheet.ts"
 import { createVirtualRows, type VirtualRowsHandle } from "@/scripts/tv/ui/virtual-rows"
 import {
   type LiveChannel,
@@ -90,6 +94,7 @@ const GUIDE_DAY_CACHE_MAX = 10
 
 interface ViewState {
   playlistId: string
+  isCustomPlaylist: boolean
   channels: LiveChannel[]
   channelById: Map<string, LiveChannel>
   groups: CastChannelGroup[]
@@ -170,6 +175,7 @@ const view: TvView = {
   mount(root: HTMLElement, ctx: TvViewContext) {
     const state: ViewState = {
       playlistId: "",
+      isCustomPlaylist: false,
       channels: [],
       channelById: new Map(),
       groups: [],
@@ -476,15 +482,111 @@ const view: TvView = {
       applyFavoriteChange(String(detail.id), !!detail.isFav)
     }
 
+    // Keeps D-pad focus on the given channel (or index 0) after an edit repaints the groups + channels.
+    async function refreshCustomChannelsAndFocus(focusChannelId: string | null): Promise<void> {
+      const channels = await loadChannels(state.playlistId)
+      if (state.destroyed || !refs) return
+      state.channels = channels
+      state.channelById = new Map(channels.map((channel) => [String(channel.id), channel]))
+      state.groups = await buildGroups()
+      if (state.destroyed || !refs) return
+      renderGroups()
+
+      const targetGroupKey =
+        (focusChannelId &&
+          state.groups.find((group) => group.channels.some((candidate) => String(candidate.id) === focusChannelId))?.key) ||
+        (state.groups.some((group) => group.key === state.activeGroupKey) ? state.activeGroupKey : state.groups[0]?.key) ||
+        ""
+      if (targetGroupKey) selectGroup(targetGroupKey)
+      if (focusChannelId) focusChannelRow(focusChannelId)
+      else channelRows?.focusIndex(0)
+    }
+
+    async function moveCustomChannel(channel: LiveChannel, direction: "up" | "down"): Promise<void> {
+      let nextDoc
+      try {
+        nextDoc = await mutateCustomDoc(state.playlistId, (doc) => {
+          const docChannel = doc.channels.find((candidate) => candidate.id === channel.id)
+          if (!docChannel) {
+            toast({ title: t("editor.toastSaveFailed"), variant: "error" })
+            return null
+          }
+          return moveChannelWithinGroup(doc, docChannel.key, direction)
+        })
+      } catch {
+        toast({ title: t("editor.toastSaveFailed"), variant: "error" })
+        return
+      }
+      if (!nextDoc) return
+      invalidateEntry(state.playlistId)
+      document.dispatchEvent(new CustomEvent("xt:entries-updated"))
+      await refreshCustomChannelsAndFocus(String(channel.id))
+    }
+
+    async function deleteCustomChannel(channel: LiveChannel): Promise<void> {
+      const confirmed = await confirmDialog({
+        title: t("editor.removeChannel"),
+        message: t("editor.removeChannelConfirm", { name: channel.name || "" }),
+        confirmLabel: t("common.delete"),
+        destructive: true,
+      })
+      if (!confirmed) return
+
+      const currentIndex = state.displayed.findIndex((candidate) => String(candidate.id) === String(channel.id))
+      const neighbor = state.displayed[currentIndex + 1] ?? state.displayed[currentIndex - 1] ?? null
+
+      let nextDoc
+      try {
+        nextDoc = await mutateCustomDoc(state.playlistId, (doc) => {
+          const docChannel = doc.channels.find((candidate) => candidate.id === channel.id)
+          if (!docChannel) {
+            toast({ title: t("editor.toastSaveFailed"), variant: "error" })
+            return null
+          }
+          return removeChannels(doc, [docChannel.key])
+        })
+      } catch {
+        toast({ title: t("editor.toastSaveFailed"), variant: "error" })
+        return
+      }
+      if (!nextDoc) return
+      invalidateEntry(state.playlistId)
+      document.dispatchEvent(new CustomEvent("xt:entries-updated"))
+      await refreshCustomChannelsAndFocus(neighbor ? String(neighbor.id) : null)
+    }
+
     function openChannelActionSheet(channel: LiveChannel): void {
       const favorite = channelFavorite(channel)
-      actionSheet.open(channel.name, [
+      const items: ActionSheetItem[] = [
         { label: t("stream.menu.play"), onSelect: () => activateChannel(channel) },
         {
           label: t(favorite ? "list.menu.favoriteRemove" : "list.menu.favoriteAdd"),
           onSelect: () => toggleChannelFavorite(channel),
         },
-      ])
+      ]
+      if (state.isCustomPlaylist) {
+        if (getViewSort(state.playlistId, "live") === "default") {
+          // With no active search, state.displayed is the channel's own group in doc order.
+          const searchActive = !!state.searchQuery
+          const displayIndex = searchActive
+            ? -1
+            : state.displayed.findIndex((candidate) => String(candidate.id) === String(channel.id))
+          const isFirstInGroup = displayIndex === 0
+          const isLastInGroup = displayIndex >= 0 && displayIndex === state.displayed.length - 1
+          if (searchActive || !isFirstInGroup) {
+            items.push({ label: t("stream.menu.moveUp"), onSelect: () => void moveCustomChannel(channel, "up") })
+          }
+          if (searchActive || !isLastInGroup) {
+            items.push({ label: t("stream.menu.moveDown"), onSelect: () => void moveCustomChannel(channel, "down") })
+          }
+        }
+        items.push({
+          label: t("stream.menu.deleteChannel"),
+          onSelect: () => void deleteCustomChannel(channel),
+          destructive: true,
+        })
+      }
+      actionSheet.open(channel.name, items)
     }
 
     const runSearch = debounce((query: string) => {
@@ -778,6 +880,7 @@ const view: TvView = {
       } catch {}
       const creds = await resolvePlaylistCreds(state.playlistId)
       if (state.destroyed) return
+      state.isCustomPlaylist = isCustomHost(creds?.host)
       xtreamCreds = creds ? toXtreamCreds(state.playlistId, creds) : null
       epgSource = tvEpgSource(xtreamCreds)
       renderShell()
