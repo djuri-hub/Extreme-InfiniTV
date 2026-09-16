@@ -1,5 +1,6 @@
 package com.infinitel8p.xtream
 
+import android.content.res.ColorStateList
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -20,12 +21,16 @@ import coil.load
 class ChannelListAdapter(
   private val items: List<ChannelLite>,
   private var currentIndex: Int,
+  private val accentColor: Int?,
   private val onPick: (index: Int) -> Unit,
 ) : RecyclerView.Adapter<ChannelListAdapter.VH>() {
 
   override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
     val view = LayoutInflater.from(parent.context)
       .inflate(R.layout.row_channel, parent, false)
+    if (accentColor != null) {
+      view.findViewById<View>(R.id.channel_row_root).backgroundTintList = ColorStateList.valueOf(accentColor)
+    }
     return VH(view)
   }
 

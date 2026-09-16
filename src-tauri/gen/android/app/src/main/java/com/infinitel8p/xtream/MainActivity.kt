@@ -1406,6 +1406,15 @@ class AndroidVideoBridge(
   }
 
   @JavascriptInterface
+  fun setTvAccent(hex: String) {
+    TvAccentState.color = try {
+      if (hex.isBlank()) 0 else android.graphics.Color.parseColor(hex)
+    } catch (error: IllegalArgumentException) {
+      0
+    }
+  }
+
+  @JavascriptInterface
   fun setKeepScreenOn(enabled: Boolean) {
     activity.runOnUiThread {
       if (enabled) {
@@ -1456,6 +1465,7 @@ class AndroidVideoBridge(
       val intent = android.content.Intent(activity, VideoActivity::class.java)
       intent.putExtra(VideoActivity.EXTRA_MODE, mode)
       intent.putExtra(VideoActivity.EXTRA_TV_OVERSCAN_PERCENT, TvOverscanState.percent)
+      intent.putExtra(VideoActivity.EXTRA_TV_ACCENT, TvAccentState.color)
       configure(intent)
       activity.runOnUiThread {
         try {

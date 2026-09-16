@@ -18,6 +18,7 @@ import type { ChannelInput } from "@/scripts/lib/channel-lite.js"
 import { serializeChannelsJson } from "@/scripts/lib/channel-lite.js"
 import { setProgress, markCompleted, getTrackPrefs, setTrackPrefs } from "@/scripts/lib/preferences.js"
 import { getTvOverscan, TV_OVERSCAN_EVENT } from "@/scripts/lib/app-settings.js"
+import { resolveAccentHex } from "@/scripts/lib/playlist-accent.ts"
 import { normalizeLang } from "@/scripts/lib/track-match.js"
 import type { TrackMemoryContext } from "@/scripts/lib/track-memory.ts"
 import { log, redactUrl } from "@/scripts/lib/log.js"
@@ -95,9 +96,24 @@ function pushTvOverscan(): void {
   }
 }
 
+// Keeps VideoActivity's launch intents in sync with the active accent colour.
+function pushTvAccent(): void {
+  try {
+    const hex = resolveAccentHex()
+    if (hex) window.AndroidVideo?.setTvAccent?.(hex)
+  } catch (err) {
+    log.warn("[xt:android-video] setTvAccent bridge call failed:", err)
+  }
+}
+
 if (androidNativePlayerAvailable) {
   pushTvOverscan()
   document.addEventListener(TV_OVERSCAN_EVENT, pushTvOverscan)
+  pushTvAccent()
+  new MutationObserver(pushTvAccent).observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["data-accent", "data-theme"],
+  })
 }
 
 /**

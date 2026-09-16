@@ -44,6 +44,7 @@ interface AndroidVideoBridge {
   receiverVolume?: (level: number, muted: boolean) => boolean
   setKeepScreenOn?: (enabled: boolean) => void
   setTvOverscan?: (percent: number) => void
+  setTvAccent?: (hex: string) => void
 }
 
 interface AndroidIntentBridge {

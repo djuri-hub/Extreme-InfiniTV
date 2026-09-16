@@ -3,6 +3,7 @@ package com.infinitel8p.xtream
 import android.app.PictureInPictureParams
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.res.ColorStateList
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -83,6 +84,7 @@ class VideoActivity : AppCompatActivity() {
     const val EXTRA_SUB_ENABLED = "subEnabled"
     const val EXTRA_INITIAL_CHANNEL_ID = "initialChannelId"
     const val EXTRA_TV_OVERSCAN_PERCENT = "tvOverscanPercent"
+    const val EXTRA_TV_ACCENT = "tvAccentColor"
 
     const val MODE_VOD = "vod"
     const val MODE_LIVE = "live"
@@ -148,6 +150,7 @@ class VideoActivity : AppCompatActivity() {
   private var subLangPref: String = ""
   private var subEnabledPref: Boolean = false
   private var tvOverscanPercent: Int = 0
+  private var accentColor: Int = 0
   private var displayMode: Int = AspectRatioFrameLayout.RESIZE_MODE_FIT
 
   private var channels: List<ChannelLite> = emptyList()
@@ -437,6 +440,8 @@ class VideoActivity : AppCompatActivity() {
     subLangPref = intent.getStringExtra(EXTRA_SUB_LANG) ?: ""
     subEnabledPref = intent.getBooleanExtra(EXTRA_SUB_ENABLED, false)
     applyTvOverscanPadding(intent.getIntExtra(EXTRA_TV_OVERSCAN_PERCENT, 0))
+    accentColor = intent.getIntExtra(EXTRA_TV_ACCENT, 0)
+    applyAccentColor()
     updateControllerTitle(initialTitle)
 
     if (mode == MODE_LIVE) {
@@ -901,7 +906,7 @@ class VideoActivity : AppCompatActivity() {
 
   private fun setupChannelList() {
     val list = channelListView ?: return
-    val adapter = ChannelListAdapter(channels, currentChannelIndex) { index ->
+    val adapter = ChannelListAdapter(channels, currentChannelIndex, accentColor.takeIf { it != 0 }) { index ->
       switchChannelByIndex(index)
       hideChannelOverlay()
     }
@@ -947,6 +952,38 @@ class VideoActivity : AppCompatActivity() {
     if (tvOverscanPercent > 0) {
       Log.d(TAG, "applied tv overscan safe margin: $tvOverscanPercent% -> ${horizontalPx}x${verticalPx}px")
     }
+  }
+
+  // 0 means no accent override; leave every drawable at its default xt_accent tint.
+  private fun applyAccentColor() {
+    if (accentColor == 0) return
+    val accentTint = ColorStateList.valueOf(accentColor)
+
+    val xtControlIds = intArrayOf(
+      R.id.tv_mute_button,
+      R.id.tv_volume_seekbar,
+      R.id.tv_channel_down,
+      R.id.tv_channel_up,
+    )
+    val exoControlIds = intArrayOf(
+      androidx.media3.ui.R.id.exo_subtitle,
+      androidx.media3.ui.R.id.exo_audio_track,
+      androidx.media3.ui.R.id.exo_settings,
+      androidx.media3.ui.R.id.exo_progress,
+      androidx.media3.ui.R.id.exo_rew,
+      androidx.media3.ui.R.id.exo_play_pause,
+      androidx.media3.ui.R.id.exo_ffwd,
+    )
+    for (viewId in xtControlIds + exoControlIds) {
+      playerView?.findViewById<View>(viewId)?.backgroundTintList = accentTint
+    }
+
+    playerView?.findViewById<DefaultTimeBar>(androidx.media3.ui.R.id.exo_progress)?.apply {
+      setPlayedColor(accentColor)
+      setScrubberColor(accentColor)
+    }
+    volumeSeekBar?.progressTintList = accentTint
+    volumeSeekBar?.thumbTintList = accentTint
   }
 
   override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
@@ -1340,6 +1377,13 @@ object NativePlayerPayload {
 object TvOverscanState {
   @Volatile
   var percent: Int = 0
+}
+
+// Current TV accent colour override, pushed from JS via AndroidVideoBridge.setTvAccent
+// and read by tryLaunch for every launch intent. 0 means no override.
+object TvAccentState {
+  @Volatile
+  var color: Int = 0
 }
 
 // Remembered receiver volume/mute level, re-applied by initializePlayer() so a
