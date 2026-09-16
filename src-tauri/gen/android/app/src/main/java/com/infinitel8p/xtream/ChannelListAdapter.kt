@@ -1,13 +1,11 @@
 package com.infinitel8p.xtream
 
-import android.graphics.Color
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
 import coil.dispose
 import coil.load
@@ -15,9 +13,9 @@ import coil.load
 /**
  * Channel-list adapter for the VideoActivity D-pad overlay.
  *
- * Rows are 56dp tall, focusable, and highlight the currently-playing channel
- * via the row background. Clicks (or D-pad OK) fire [onPick] with the row's
- * index in the list.
+ * Rows are 56dp tall, focusable; a state-selector background paints the D-pad
+ * focus ring and marks the currently-playing row via isSelected. Clicks (or
+ * D-pad OK) fire [onPick] with the row's index in the list.
  */
 class ChannelListAdapter(
   private val items: List<ChannelLite>,
@@ -96,10 +94,7 @@ class ChannelListAdapter(
     }
 
     fun bindSelection(isCurrent: Boolean) {
-      val bgColor =
-        if (isCurrent) ContextCompat.getColor(itemView.context, R.color.xt_row_bg_selected)
-        else Color.TRANSPARENT
-      root.setBackgroundColor(bgColor)
+      root.isSelected = isCurrent
     }
   }
 

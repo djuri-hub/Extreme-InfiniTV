@@ -11,6 +11,7 @@ import android.util.Log
 import android.util.Rational
 import android.view.KeyEvent
 import android.view.View
+import android.view.ViewTreeObserver
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageButton
@@ -959,11 +960,31 @@ class VideoActivity : AppCompatActivity() {
     val overlay = channelOverlay ?: return
     overlay.visibility = View.VISIBLE
     overlayVisible = true
-    channelListView?.post {
-      channelListView?.scrollToPosition(currentChannelIndex.coerceAtLeast(0))
-      channelListView?.findViewHolderForAdapterPosition(currentChannelIndex)
-        ?.itemView?.requestFocus()
+    val list = channelListView ?: return
+    val targetIndex = currentChannelIndex.coerceAtLeast(0)
+    list.post {
+      val rowHeightPx = (56 * resources.displayMetrics.density).toInt()
+      val centeringOffsetPx = if (list.height > 0) {
+        ((list.height - rowHeightPx) / 2).coerceAtLeast(0)
+      } else {
+        0
+      }
+      (list.layoutManager as? LinearLayoutManager)
+        ?.scrollToPositionWithOffset(targetIndex, centeringOffsetPx)
+      focusChannelRowOnceLaidOut(list, targetIndex)
     }
+  }
+
+  // The scroll above needs another layout pass before the target row's holder exists.
+  private fun focusChannelRowOnceLaidOut(list: RecyclerView, index: Int) {
+    val observer = list.viewTreeObserver
+    observer.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
+      override fun onGlobalLayout() {
+        list.viewTreeObserver.removeOnGlobalLayoutListener(this)
+        val rowTookFocus = list.findViewHolderForAdapterPosition(index)?.itemView?.requestFocus()
+        if (rowTookFocus != true) list.requestFocus()
+      }
+    })
   }
 
   private fun hideChannelOverlay() {
