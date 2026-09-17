@@ -529,8 +529,8 @@ function removeSelectedChannelsWithUndo(): void {
 function openBulkMoveToGroupMenu(trigger: HTMLButtonElement): void {
   const keys = [...selectedChannelKeys]
   if (!keys.length) return
-  const items: MenuItemDef[] = doc.groups.map((group) => ({
-    key: `group:${group}`,
+  const items: MenuItemDef[] = doc.groups.map((group, index) => ({
+    key: `group:${index}`,
     label: group,
     onClick: () => applyDoc(setChannelGroup(doc, keys, group)),
   }))
@@ -1818,9 +1818,9 @@ function openMoveToGroupMenu(trigger: HTMLButtonElement, channel: CustomChannel)
   const items: MenuItemDef[] = [
     { key: "back", label: t("common.back"), onClick: () => openRowMenu(trigger, channel) },
   ]
-  for (const group of doc.groups) {
+  for (const [index, group] of doc.groups.entries()) {
     items.push({
-      key: `group:${group}`,
+      key: `group:${index}`,
       label: group,
       disabled: group === channel.group,
       onClick: () => applyDoc(moveChannel(doc, channel.key, null, group)),
