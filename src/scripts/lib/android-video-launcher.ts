@@ -108,12 +108,16 @@ function pushTvAccent(): void {
 
 if (androidNativePlayerAvailable) {
   pushTvOverscan()
-  document.addEventListener(TV_OVERSCAN_EVENT, pushTvOverscan)
   pushTvAccent()
-  new MutationObserver(pushTvAccent).observe(document.documentElement, {
-    attributes: true,
-    attributeFilter: ["data-accent", "data-theme"],
-  })
+  if (typeof document !== "undefined") {
+    document.addEventListener?.(TV_OVERSCAN_EVENT, pushTvOverscan)
+    if (typeof MutationObserver !== "undefined" && document.documentElement) {
+      new MutationObserver(pushTvAccent).observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["data-accent", "data-theme"],
+      })
+    }
+  }
 }
 
 /**
