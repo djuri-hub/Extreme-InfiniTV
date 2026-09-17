@@ -39,4 +39,9 @@
     <string name="webview_floor_get_beta">Get WebView Beta</string>
     <string name="webview_floor_developer_options">Developer options</string>
     <string name="webview_floor_continue">Continue anyway</string>
+    <string name="downloads_notification_channel">Downloads</string>
+    <string name="downloads_notification_title_many">Downloading %1$d files</string>
+    <string name="downloads_notification_pause_all">Pause all</string>
+    <string name="downloads_notification_complete_title">Download complete</string>
+    <string name="downloads_notification_complete_text">%1$s finished downloading</string>
 </resources>

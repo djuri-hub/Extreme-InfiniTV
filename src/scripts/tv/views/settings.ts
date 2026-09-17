@@ -62,6 +62,7 @@ import { checkForUpdate, isPlayStoreInstall, getPlayStoreUrl, getCurrentAppVersi
 import { openExternal } from "@/scripts/lib/external-link"
 import { collectDiagnosticBundle } from "@/scripts/lib/diagnostic-bundle"
 import { clearAll as clearAllCache } from "@/scripts/lib/cache.js"
+import { clearNativeDownloads } from "@/scripts/lib/downloads.js"
 import { clearImageCache } from "@/scripts/lib/img-cache"
 import { saveBackupSnapshot } from "@/scripts/lib/backup-snapshot"
 import { toastSuccess, toastError } from "@/scripts/lib/toast"
@@ -957,6 +958,9 @@ const view: TvView = {
       }
       try {
         await clearAllCache()
+      } catch {}
+      try {
+        clearNativeDownloads()
       } catch {}
       try {
         localStorage.clear()

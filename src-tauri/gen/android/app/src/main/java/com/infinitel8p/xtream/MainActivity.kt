@@ -1482,6 +1482,134 @@ class AndroidVideoBridge(
   }
 }
 
+// Bridge for the native download foreground service (DownloadForegroundService.kt). JS
+// (downloads.js) owns the queue model + UI in localStorage; native is the source of truth for
+// transfer state on Android, so every mutating call here goes straight through DownloadEngine
+// and this bridge just mirrors its events back into the WebView as `xt:android-download`.
+class DownloadBridge(
+  private val activity: MainActivity,
+  private val hostedWebViewRef: () -> WebView?,
+) {
+  companion object {
+    private const val TAG = "AndroidDownload"
+    private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 4304
+  }
+
+  init {
+    DownloadEvents.pushListener = { record -> dispatchToWebView(record) }
+  }
+
+  @JavascriptInterface
+  fun isSupported(): Boolean = true
+
+  @JavascriptInterface
+  fun start(json: String): Boolean {
+    return try {
+      requestNotificationPermissionIfNeeded()
+      DownloadEngine.start(activity, JSONObject(json))
+    } catch (error: Throwable) {
+      Log.w(TAG, "start failed", error)
+      false
+    }
+  }
+
+  @JavascriptInterface
+  fun pause(id: String): Boolean {
+    return try {
+      DownloadEngine.pause(id)
+    } catch (error: Throwable) {
+      Log.w(TAG, "pause failed", error)
+      false
+    }
+  }
+
+  @JavascriptInterface
+  fun resume(id: String): Boolean {
+    return try {
+      DownloadEngine.resume(id)
+    } catch (error: Throwable) {
+      Log.w(TAG, "resume failed", error)
+      false
+    }
+  }
+
+  @JavascriptInterface
+  fun remove(id: String): Boolean {
+    return try {
+      DownloadEngine.remove(id)
+    } catch (error: Throwable) {
+      Log.w(TAG, "remove failed", error)
+      false
+    }
+  }
+
+  @JavascriptInterface
+  fun setMaxConcurrent(n: Int) {
+    try {
+      DownloadEngine.setMaxConcurrent(activity, n)
+    } catch (error: Throwable) {
+      Log.w(TAG, "setMaxConcurrent failed", error)
+    }
+  }
+
+  // Used by the app's "Reset everything" flow.
+  @JavascriptInterface
+  fun clearAll(): Boolean {
+    return try {
+      DownloadEngine.clearAll(activity)
+    } catch (error: Throwable) {
+      Log.w(TAG, "clearAll failed", error)
+      false
+    }
+  }
+
+  @JavascriptInterface
+  fun snapshot(): String {
+    return try {
+      DownloadEngine.snapshot(activity)
+    } catch (error: Throwable) {
+      Log.w(TAG, "snapshot failed", error)
+      "[]"
+    }
+  }
+
+  private fun requestNotificationPermissionIfNeeded() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+    if (ActivityCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) ==
+      PackageManager.PERMISSION_GRANTED
+    ) {
+      return
+    }
+    try {
+      ActivityCompat.requestPermissions(
+        activity,
+        arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+        NOTIFICATION_PERMISSION_REQUEST_CODE
+      )
+    } catch (error: Throwable) {
+      Log.w(TAG, "requestPermissions failed", error)
+    }
+  }
+
+  private fun dispatchToWebView(record: JSONObject) {
+    val webView = hostedWebViewRef() ?: return
+    val script = """
+      (function(){
+        try {
+          document.dispatchEvent(new CustomEvent('xt:android-download', { detail: $record }));
+        } catch (_) {}
+      })();
+    """.trimIndent()
+    activity.runOnUiThread { webView.evaluateJavascript(script, null) }
+  }
+
+  // Called from MainActivity.onDestroy so a recreate() doesn't leave a stale WebView reference wired up.
+  // Does NOT stop DownloadForegroundService - downloads must outlive the activity.
+  fun activityDestroyed() {
+    DownloadEvents.pushListener = null
+  }
+}
+
 // "Add from website" sniffer: throwaway offscreen WebView, URL prefilter only; sniff-classify.ts classifies.
 class SnifferBridge(
   private val activity: TauriActivity,
@@ -2085,6 +2213,10 @@ class MainActivity : TauriActivity() {
   // Cached so onDestroy() can tear down the throwaway sniffer WebView if it's still running.
   private var snifferBridge: SnifferBridge? = null
 
+  // Cached so onDestroy() can clear DownloadEvents.pushListener. DownloadForegroundService itself
+  // is NOT touched here - downloads must keep running after the activity is destroyed.
+  private var downloadBridge: DownloadBridge? = null
+
   // Cached so onDestroy() can unregister/stop NSD listeners.
   private var nsdBridge: NsdBridge? = null
 
@@ -2333,6 +2465,9 @@ class MainActivity : TauriActivity() {
     val sniffer = SnifferBridge(this, { hostedWebView })
     snifferBridge = sniffer
     webView.addJavascriptInterface(sniffer, "AndroidSniffer")
+    val download = DownloadBridge(this, { hostedWebView })
+    downloadBridge = download
+    webView.addJavascriptInterface(download, "AndroidDownload")
     val nsd = NsdBridge(this)
     nsdBridge = nsd
     webView.addJavascriptInterface(nsd, "AndroidNsd")
@@ -2515,6 +2650,7 @@ class MainActivity : TauriActivity() {
     // Closes over this activity's WebView, so a recreate() would leave it swallowing every receiver event.
     if (receiverSessionActive) EventQueue.pushListener = null
     snifferBridge?.activityDestroyed()
+    downloadBridge?.activityDestroyed()
     nsdBridge?.activityDestroyed()
     castMediaBridge?.activityDestroyed()
     if (isFinishing && receiverModeActive) {

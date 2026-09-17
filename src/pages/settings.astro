@@ -2613,7 +2613,7 @@ const navStructure: NavSection[] = [
       getActiveConnectionsSync,
       USER_INFO_LOADED_EVENT,
     } from "@/scripts/lib/account-info.js"
-    import { isDownloadable, scanDownloadsFolder } from "@/scripts/lib/downloads.js"
+    import { isDownloadable, scanDownloadsFolder, clearNativeDownloads } from "@/scripts/lib/downloads.js"
     import {
       getDiscordClientId,
       setDiscordClientId,
@@ -3433,6 +3433,7 @@ const navStructure: NavSection[] = [
           log.warn("[settings:reset] backup snapshot failed:", err)
         }
         try { await clearAllCache() } catch {}
+        try { clearNativeDownloads() } catch {}
         try { localStorage.clear() } catch {}
         try { sessionStorage.clear() } catch {}
         try {

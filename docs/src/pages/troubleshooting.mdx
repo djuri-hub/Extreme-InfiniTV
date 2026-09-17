@@ -120,9 +120,10 @@ Make sure you're on the latest release first - a black-PiP bug was fixed back in
 
 ## Downloads won't resume
 
-Downloads pick back up from where they left off when you restart the app. If one is stuck:
+Downloads pick back up from where they left off when you restart the app. On Android the transfer runs in a background service with a progress notification, so you can leave the Downloads page, switch apps, or turn the screen off; if the connection drops, the download waits and resumes by itself when the network is back. If one is stuck:
 
 - Check the download folder under **Settings > Data > Downloads** is set and writable. On Android, you may need to re-grant folder access.
+- On Android 13 and newer, allow notifications for the app. Without that permission the progress notification is hidden, but the download still runs.
 - Cancel the stuck download and re-queue it.
 - If the same download keeps failing partway through, delete the partial file and start over - some providers send mismatched file sizes that confuse the resume logic.
 
