@@ -82,6 +82,8 @@ export interface TvLiveChannel {
   tvgId?: string | null
   tvgShift?: number | null
   chno?: number | null
+  /** Custom-playlist reference whose source channel could no longer be found. */
+  unresolved?: true
 }
 
 export interface TvPlayLiveInput {
@@ -252,6 +254,14 @@ function commitZap(): void {
     return
   }
   osd?.hideZap()
+  if (resolved.unresolved) {
+    toast({
+      title: t("stream.error.cantPlay", { channel: resolved.name || `#${resolved.id}` }),
+      description: t("stream.error.checkConnection"),
+      variant: "error",
+    })
+    return
+  }
   const events = currentEvents ?? {}
   void playLive(
     { playlistId: activeLiveTarget.playlistId, channel: resolved, siblings: activeLiveTarget.channels },

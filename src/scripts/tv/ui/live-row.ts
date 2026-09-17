@@ -128,6 +128,18 @@ export function buildChannelRowSkeleton(): HTMLDivElement {
   return row
 }
 
+/** Non-interactive title/separator row for a custom playlist header: same slot as a channel row, no play/favorite affordance. */
+export function buildChannelHeaderRow(channel: LiveChannel): HTMLDivElement {
+  const row = document.createElement("div")
+  row.setAttribute("role", "presentation")
+  row.className = "flex min-h-[4rem] w-full items-center border-t border-line px-3"
+  const label = document.createElement("span")
+  label.className = "truncate text-2xs font-semibold uppercase tracking-wide text-fg-3"
+  label.textContent = channel.name || ""
+  row.appendChild(label)
+  return row
+}
+
 export function buildChannelRow(channel: LiveChannel, index: number, isPlaying: boolean, favorite: boolean): HTMLButtonElement {
   const row = document.createElement("button")
   row.type = "button"
@@ -139,6 +151,10 @@ export function buildChannelRow(channel: LiveChannel, index: number, isPlaying: 
   row.dataset.channelId = String(channel.id)
   row.dataset.channelKey = String(channel.id)
   if (isPlaying) row.dataset.nowPlaying = "true"
+  if (channel.unresolved) {
+    row.dataset.unresolved = "true"
+    row.setAttribute("aria-disabled", "true")
+  }
 
   const accentBar = document.createElement("span")
   accentBar.setAttribute("aria-hidden", "true")
@@ -162,18 +178,22 @@ export function buildChannelRow(channel: LiveChannel, index: number, isPlaying: 
   const nameLine = document.createElement("span")
   nameLine.className = "flex min-w-0 items-center gap-2"
   const nameText = document.createElement("span")
-  nameText.className = "min-w-0 truncate text-base font-semibold text-fg"
+  nameText.className = `min-w-0 truncate text-base font-semibold text-fg${channel.unresolved ? " opacity-60" : ""}`
   nameText.textContent = channel.name
   const favStar = document.createElement("span")
   favStar.dataset.role = "fav"
   favStar.setAttribute("aria-hidden", "true")
   favStar.className = `shrink-0 text-xs text-accent${favorite ? "" : " hidden"}`
   favStar.innerHTML = STAR_FILLED
+  const unresolvedBadge = document.createElement("span")
+  unresolvedBadge.dataset.role = "unresolved"
+  unresolvedBadge.className = `shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-2xs font-medium text-fg-3${channel.unresolved ? "" : " hidden"}`
+  unresolvedBadge.textContent = t("editor.unresolvedBadge")
   const playingPill = document.createElement("span")
   playingPill.className =
     "hidden shrink-0 rounded-full bg-accent/15 px-2 py-0.5 text-2xs font-medium text-accent group-data-[now-playing=true]/row:inline-flex"
   playingPill.textContent = t("cast.remote.statePlaying")
-  nameLine.append(nameText, favStar, playingPill)
+  nameLine.append(nameText, favStar, unresolvedBadge, playingPill)
 
   const nowLine = document.createElement("span")
   nowLine.dataset.role = "now"

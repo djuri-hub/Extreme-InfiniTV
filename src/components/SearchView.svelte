@@ -199,6 +199,7 @@
 
       const items = []
       for (const channel of liveData) {
+        if (channel.isHeader) continue
         items.push({
           kind: "live",
           id: Number(channel.id),

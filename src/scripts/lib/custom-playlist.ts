@@ -51,6 +51,8 @@ export interface CustomChannel {
   sources: CustomSource[]
   overrides: CustomChannelOverrides
   catchup: CustomChannelCatchup | null
+  /** Absent for a normal channel. "header" marks a non-playable title/separator row within a group. */
+  kind?: "header"
 }
 
 export interface CustomPlaylistDoc {
@@ -150,6 +152,44 @@ export function addChannel(
   return { doc: newDoc, channel }
 }
 
+export function isHeaderChannel(channel: CustomChannel): boolean {
+  return channel.kind === "header"
+}
+
+export interface AddHeaderOptions {
+  beforeKey?: string | null
+}
+
+/** Adds a non-playable title/separator row to a group, inserted before `beforeKey` when given, else appended. */
+export function addHeader(
+  doc: CustomPlaylistDoc,
+  group: string,
+  name: string,
+  opts: AddHeaderOptions = {}
+): CustomPlaylistDoc {
+  const header: CustomChannel = {
+    key: makeKey(),
+    id: doc.nextId,
+    group,
+    kind: "header",
+    sources: [],
+    overrides: { name, logo: null, chno: null, tvgId: null },
+    catchup: null,
+  }
+  const groups = doc.groups.includes(group) ? doc.groups : [...doc.groups, group]
+  const beforeKey = opts.beforeKey ?? null
+  let insertIndex = doc.channels.findIndex((channel) => channel.key === beforeKey)
+  if (insertIndex === -1) {
+    let lastGroupIndex = -1
+    doc.channels.forEach((channel, index) => {
+      if (channel.group === group) lastGroupIndex = index
+    })
+    insertIndex = lastGroupIndex === -1 ? doc.channels.length : lastGroupIndex + 1
+  }
+  const channels = [...doc.channels.slice(0, insertIndex), header, ...doc.channels.slice(insertIndex)]
+  return { ...doc, nextId: doc.nextId + 1, groups, channels }
+}
+
 export function removeChannels(doc: CustomPlaylistDoc, keys: string[]): CustomPlaylistDoc {
   const removedKeys = new Set(keys)
   const channels = doc.channels.filter((channel) => !removedKeys.has(channel.key))
@@ -164,10 +204,29 @@ export function moveChannel(
   beforeKey: string | null,
   group: string
 ): CustomPlaylistDoc {
-  const channelIndex = doc.channels.findIndex((channel) => channel.key === key)
-  if (channelIndex === -1) return doc
-  const movedChannel: CustomChannel = { ...doc.channels[channelIndex], group }
-  const remainingChannels = doc.channels.filter((channel) => channel.key !== key)
+  return moveChannels(doc, [key], beforeKey, group)
+}
+
+/** Moves the given channels as a contiguous block, preserving their current relative order. */
+export function moveChannels(
+  doc: CustomPlaylistDoc,
+  keys: string[],
+  beforeKey: string | null,
+  group: string
+): CustomPlaylistDoc {
+  const keySet = new Set(keys)
+  const selectedChannels = doc.channels.filter((channel) => keySet.has(channel.key))
+  if (!selectedChannels.length) return doc
+
+  // Dropping the block onto one of its own members: keep their position, only recolor the group.
+  if (beforeKey && keySet.has(beforeKey)) {
+    const channels = doc.channels.map((channel) => (keySet.has(channel.key) ? { ...channel, group } : channel))
+    const groups = doc.groups.includes(group) ? doc.groups : [...doc.groups, group]
+    return { ...doc, channels, groups }
+  }
+
+  const movedChannels = selectedChannels.map((channel) => ({ ...channel, group }))
+  const remainingChannels = doc.channels.filter((channel) => !keySet.has(channel.key))
 
   let insertIndex: number
   if (beforeKey) {
@@ -183,7 +242,7 @@ export function moveChannel(
 
   const channels = [
     ...remainingChannels.slice(0, insertIndex),
-    movedChannel,
+    ...movedChannels,
     ...remainingChannels.slice(insertIndex),
   ]
   const groups = doc.groups.includes(group) ? doc.groups : [...doc.groups, group]
@@ -208,6 +267,76 @@ export function moveChannelWithinGroup(
   const afterNextIndex = index + 2
   const beforeKey = afterNextIndex < groupChannels.length ? groupChannels[afterNextIndex].key : null
   return moveChannel(doc, key, beforeKey, channel.group)
+}
+
+/** Shifts each contiguous run of selected items one step, stopping a run that's already at the edge it's moving toward. */
+function shiftSelectedRuns<T>(items: T[], isSelected: (item: T) => boolean, direction: "up" | "down"): T[] {
+  const result = [...items]
+  const length = result.length
+  if (direction === "up") {
+    let index = 0
+    while (index < length) {
+      if (!isSelected(result[index])) {
+        index++
+        continue
+      }
+      const runStart = index
+      let runEnd = index
+      while (runEnd + 1 < length && isSelected(result[runEnd + 1])) runEnd++
+      if (runStart > 0) {
+        const [moved] = result.splice(runStart - 1, 1)
+        result.splice(runEnd, 0, moved)
+      }
+      index = runEnd + 1
+    }
+  } else {
+    let index = length - 1
+    while (index >= 0) {
+      if (!isSelected(result[index])) {
+        index--
+        continue
+      }
+      const runEnd = index
+      let runStart = index
+      while (runStart - 1 >= 0 && isSelected(result[runStart - 1])) runStart--
+      if (runEnd < length - 1) {
+        const [moved] = result.splice(runEnd + 1, 1)
+        result.splice(runStart, 0, moved)
+      }
+      index = runStart - 1
+    }
+  }
+  return result
+}
+
+/** Moves the selected channels one step within their respective groups, keeping selected neighbours together. */
+export function moveChannelsWithinGroup(
+  doc: CustomPlaylistDoc,
+  keys: string[],
+  direction: "up" | "down"
+): CustomPlaylistDoc {
+  const keySet = new Set(keys)
+  const touchedGroups = new Set(
+    doc.channels.filter((channel) => keySet.has(channel.key)).map((channel) => channel.group)
+  )
+  if (!touchedGroups.size) return doc
+
+  const channels = [...doc.channels]
+  let changed = false
+  for (const groupName of touchedGroups) {
+    const groupPositions: number[] = []
+    channels.forEach((channel, index) => {
+      if (channel.group === groupName) groupPositions.push(index)
+    })
+    const groupChannels = groupPositions.map((position) => channels[position])
+    const reordered = shiftSelectedRuns(groupChannels, (channel) => keySet.has(channel.key), direction)
+    groupPositions.forEach((position, index) => {
+      if (channels[position] !== reordered[index]) changed = true
+      channels[position] = reordered[index]
+    })
+  }
+  if (!changed) return doc
+  return { ...doc, channels }
 }
 
 export function setOverrides(
@@ -392,6 +521,7 @@ export interface ResolvedCustomChannel {
   drmScheme?: string | null
   licenseKey?: string | null
   unresolved?: true
+  isHeader?: true
 }
 
 function resolveCatchupFields(channel: CustomChannel, sourceChannel: any): CustomChannelCatchup {
@@ -537,7 +667,26 @@ function resolveDirectSource(channel: CustomChannel, source: CustomSourceDirect)
   }
 }
 
+function resolveHeaderChannel(channel: CustomChannel): ResolvedCustomChannel {
+  const name = channel.overrides?.name ?? ""
+  return {
+    id: channel.id,
+    name,
+    category: channel.group,
+    categories: [channel.group],
+    logo: null,
+    tvgId: undefined,
+    chno: undefined,
+    norm: normalize(`${name} ${channel.group}`),
+    url: "",
+    isRadio: false,
+    ...resolveCatchupFields(channel, undefined),
+    isHeader: true,
+  }
+}
+
 function resolveChannel(channel: CustomChannel, pools: Map<string, SourcePool>): ResolvedCustomChannel {
+  if (isHeaderChannel(channel)) return resolveHeaderChannel(channel)
   const source = Array.isArray(channel.sources) ? channel.sources[0] : undefined
   if (!source || typeof source !== "object") {
     return unresolvedChannel(channel, channel.overrides?.name ?? "")

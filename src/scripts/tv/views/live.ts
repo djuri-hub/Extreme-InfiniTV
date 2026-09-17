@@ -61,6 +61,7 @@ import {
   buildGroupButton,
   buildChannelRowSkeleton,
   buildChannelRow,
+  buildChannelHeaderRow,
   createGuidePanel,
   type GuidePanelHandle,
 } from "@/scripts/tv/ui/live-row"
@@ -224,6 +225,7 @@ const view: TvView = {
     }
 
     function paintChannelRow(row: HTMLElement, channel: LiveChannel, programmes: Map<string, Programme[]> | null): void {
+      if (channel.isHeader) return
       const nowLine = row.querySelector<HTMLElement>('[data-role="now"]')
       const nextLine = row.querySelector<HTMLElement>('[data-role="next"]')
       const progressFill = row.querySelector<HTMLElement>('[data-role="progress"]')
@@ -237,7 +239,7 @@ const view: TvView = {
     }
 
     function requestShortEpgRowNowNext(channel: LiveChannel): void {
-      if (!xtreamCreds) return
+      if (!xtreamCreds || channel.isHeader || channel.unresolved) return
       const key = String(channel.id)
       void shortEpgCache.getNowNext(xtreamCreds, channel.id).then((nowNext) => {
         if (state.destroyed || !nowNext) return
@@ -248,6 +250,7 @@ const view: TvView = {
     }
 
     function buildAndPaintChannelRow(channel: LiveChannel, index: number): HTMLElement {
+      if (channel.isHeader) return buildChannelHeaderRow(channel)
       const programmes = getProgrammesSync(state.playlistId)?.programmes ?? null
       const row = buildChannelRow(channel, index, String(channel.id) === state.playingChannelId, channelFavorite(channel))
       paintChannelRow(row, channel, programmes)
@@ -296,6 +299,14 @@ const view: TvView = {
     }
 
     function onGuideReplay(channel: LiveChannel, programme: Programme, rawStart: number, rawStop: number): void {
+      if (channel.unresolved) {
+        toast({
+          title: t("stream.error.cantPlay", { channel: channel.name || `#${channel.id}` }),
+          description: t("stream.error.checkConnection"),
+          variant: "error",
+        })
+        return
+      }
       void playCatchup(
         {
           playlistId: state.playlistId,
@@ -442,6 +453,14 @@ const view: TvView = {
     }
 
     function activateChannel(channel: LiveChannel): void {
+      if (channel.unresolved) {
+        toast({
+          title: t("stream.error.cantPlay", { channel: channel.name || `#${channel.id}` }),
+          description: t("stream.error.checkConnection"),
+          variant: "error",
+        })
+        return
+      }
       const currentIndex = state.displayed.findIndex((candidate) => String(candidate.id) === String(channel.id))
       // state.displayed may have been replaced (e.g. by a search) between the long-press
       // and the action sheet's Play - fall back to the tuned channel plus the leading
@@ -596,9 +615,11 @@ const view: TvView = {
         renderChannelList(group?.channels ?? [])
         return
       }
-      void searchCatalog(`live:${state.playlistId}`, state.channels, query, SEARCH_RESULT_CAP).then((indexes) => {
+      // Headers never match a text filter.
+      const searchableChannels = state.channels.filter((channel) => !channel.isHeader)
+      void searchCatalog(`live:${state.playlistId}`, searchableChannels, query, SEARCH_RESULT_CAP).then((indexes) => {
         if (indexes === null || state.searchQuery !== query) return
-        renderChannelList(Array.from(indexes, (index) => state.channels[index]))
+        renderChannelList(Array.from(indexes, (index) => searchableChannels[index]))
       })
     }, SEARCH_DEBOUNCE_MS)
 
@@ -662,13 +683,17 @@ const view: TvView = {
 
     async function buildGroups(): Promise<CastChannelGroup[]> {
       await ensurePreferencesLoaded()
-      return buildCastChannelGroups(state.channels, {
+      const channelSort = getViewSort(state.playlistId, "live")
+      // Headers only make sense in the playlist's own order; any reorder scatters them.
+      const sourceChannels =
+        channelSort === "default" ? state.channels : state.channels.filter((channel) => !channel.isHeader)
+      return buildCastChannelGroups(sourceChannels, {
         favorites: getFavorites(state.playlistId, "live"),
         hiddenCategories: getHiddenCategories(state.playlistId, "live"),
         allowedCategories: getAllowedCategories(state.playlistId, "live"),
         categoryMode: getCategoryMode(state.playlistId, "live"),
         categorySort: getCategorySort(state.playlistId, "live"),
-        channelSort: getViewSort(state.playlistId, "live"),
+        channelSort,
         uncategorizedLabel: t("stream.uncategorized"),
         favoritesLabel: t("cast.remote.channelsFavorites"),
         allLabel: t("cast.remote.channelsAll"),
@@ -770,6 +795,7 @@ const view: TvView = {
         keyOf: (channel) => String(channel.id),
         buildRow: buildAndPaintChannelRow,
         onRowUnmount: releaseCachedImages,
+        isSkippable: (channel) => !!channel.isHeader,
       })
 
       groupRows = createVirtualRows<CastChannelGroup>({

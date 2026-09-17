@@ -18,9 +18,13 @@ import {
   saveCustomDoc,
   mutateCustomDoc,
   addChannel,
+  addHeader,
+  isHeaderChannel,
   removeChannels,
   moveChannel,
+  moveChannels,
   moveChannelWithinGroup,
+  moveChannelsWithinGroup,
   setOverrides,
   setCatchup,
   setChannelGroup,
@@ -98,6 +102,65 @@ describe("addChannel", () => {
     expect(channel.group).toBe("Uncategorized")
     expect(channel.overrides).toEqual({ name: null, logo: null, chno: null, tvgId: null })
     expect(channel.catchup).toBeNull()
+  })
+})
+
+describe("addHeader", () => {
+  it("appends a header to the end of the group and registers it", () => {
+    let doc = emptyCustomDoc()
+    doc = addChannel(doc, xtreamSource("p1", 1), { name: "A", group: "News" }).doc
+    doc = addHeader(doc, "News", "Regional")
+
+    expect(doc.groups).toEqual(["News"])
+    const header = doc.channels[doc.channels.length - 1]
+    expect(header.kind).toBe("header")
+    expect(header.group).toBe("News")
+    expect(header.overrides).toEqual({ name: "Regional", logo: null, chno: null, tvgId: null })
+    expect(header.sources).toEqual([])
+    expect(header.catchup).toBeNull()
+    expect(isHeaderChannel(header)).toBe(true)
+  })
+
+  it("inserts before a given key within the same group", () => {
+    let doc = emptyCustomDoc()
+    const first = addChannel(doc, xtreamSource("p1", 1), { name: "A", group: "News" })
+    doc = first.doc
+    const second = addChannel(doc, xtreamSource("p1", 2), { name: "B", group: "News" })
+    doc = second.doc
+
+    doc = addHeader(doc, "News", "Regional", { beforeKey: second.channel.key })
+    expect(doc.channels.map((channel) => channel.overrides.name)).toEqual(["A", "Regional", "B"])
+  })
+
+  it("registers a brand-new group name", () => {
+    const doc = addHeader(emptyCustomDoc(), "Movies", "Genres")
+    expect(doc.groups).toEqual(["Movies"])
+  })
+
+  it("assigns a sequential id and advances nextId", () => {
+    let doc = emptyCustomDoc()
+    doc = addChannel(doc, xtreamSource("p1", 1), { name: "A", group: "News" }).doc
+    const before = doc.nextId
+    doc = addHeader(doc, "News", "Regional")
+    const header = doc.channels[doc.channels.length - 1]
+    expect(header.id).toBe(before)
+    expect(doc.nextId).toBe(before + 1)
+  })
+
+  it("does not mutate the input doc", () => {
+    const doc = emptyCustomDoc()
+    const snapshot = JSON.parse(JSON.stringify(doc))
+    addHeader(doc, "News", "Regional")
+    expect(doc).toEqual(snapshot)
+  })
+})
+
+describe("isHeaderChannel", () => {
+  it("is true only for header channels", () => {
+    const { channel } = addChannel(emptyCustomDoc(), xtreamSource("p1", 1), { name: "A" })
+    expect(isHeaderChannel(channel)).toBe(false)
+    const doc = addHeader(emptyCustomDoc(), "News", "Regional")
+    expect(isHeaderChannel(doc.channels[0])).toBe(true)
   })
 })
 
@@ -252,6 +315,171 @@ describe("moveChannelWithinGroup", () => {
     const { doc, second } = buildThreeChannelDoc()
     const snapshot = JSON.parse(JSON.stringify(doc))
     moveChannelWithinGroup(doc, second.key, "up")
+    expect(doc).toEqual(snapshot)
+  })
+})
+
+describe("moveChannels", () => {
+  function buildFourChannelDoc() {
+    let doc = emptyCustomDoc()
+    const first = addChannel(doc, xtreamSource("p1", 1), { name: "A", group: "News" })
+    doc = first.doc
+    const second = addChannel(doc, xtreamSource("p1", 2), { name: "B", group: "News" })
+    doc = second.doc
+    const third = addChannel(doc, xtreamSource("p1", 3), { name: "C", group: "News" })
+    doc = third.doc
+    const fourth = addChannel(doc, xtreamSource("p1", 4), { name: "D", group: "Sport" })
+    doc = fourth.doc
+    return { doc, first: first.channel, second: second.channel, third: third.channel, fourth: fourth.channel }
+  }
+
+  it("moves a block of channels before another key, preserving their relative order", () => {
+    const { doc, first, second, third } = buildFourChannelDoc()
+    const result = moveChannels(doc, [third.key, first.key], null, "News")
+    expect(result.channels.map((channel) => channel.key)).toEqual([
+      second.key,
+      first.key,
+      third.key,
+      doc.channels[3].key,
+    ])
+  })
+
+  it("moves a block to the tail of a group and reassigns their group", () => {
+    const { doc, first, second, third, fourth } = buildFourChannelDoc()
+    const result = moveChannels(doc, [first.key, second.key], null, "Sport")
+    const keys = result.channels.map((channel) => channel.key)
+    expect(keys.indexOf(fourth.key)).toBeLessThan(keys.indexOf(first.key))
+    expect(keys.indexOf(first.key)).toBeLessThan(keys.indexOf(second.key))
+    expect(result.channels.find((channel) => channel.key === first.key)?.group).toBe("Sport")
+    expect(result.channels.find((channel) => channel.key === second.key)?.group).toBe("Sport")
+    expect(result.channels.find((channel) => channel.key === third.key)?.group).toBe("News")
+  })
+
+  it("ignores unknown keys mixed in with real ones", () => {
+    const { doc, first, second } = buildFourChannelDoc()
+    const result = moveChannels(doc, [first.key, "missing-key"], second.key, "News")
+    expect(result.channels.map((channel) => channel.key)).toEqual([
+      first.key,
+      second.key,
+      doc.channels[2].key,
+      doc.channels[3].key,
+    ])
+  })
+
+  it("is a no-op when every key is unknown", () => {
+    const { doc } = buildFourChannelDoc()
+    const result = moveChannels(doc, ["missing-a", "missing-b"], null, "News")
+    expect(result).toBe(doc)
+  })
+
+  it("treats beforeKey inside the moved set as a no-op reorder but still applies the group change", () => {
+    const { doc, first, second, third } = buildFourChannelDoc()
+    const result = moveChannels(doc, [first.key, second.key], second.key, "Sport")
+    expect(result.channels.map((channel) => channel.key)).toEqual([
+      first.key,
+      second.key,
+      third.key,
+      doc.channels[3].key,
+    ])
+    expect(result.channels.find((channel) => channel.key === first.key)?.group).toBe("Sport")
+    expect(result.channels.find((channel) => channel.key === second.key)?.group).toBe("Sport")
+  })
+
+  it("registers a brand-new group name when moved there", () => {
+    const { doc, first, second } = buildFourChannelDoc()
+    const result = moveChannels(doc, [first.key, second.key], null, "Movies")
+    expect(result.groups).toContain("Movies")
+  })
+
+  it("does not mutate the input doc", () => {
+    const { doc, first, second } = buildFourChannelDoc()
+    const snapshot = JSON.parse(JSON.stringify(doc))
+    moveChannels(doc, [first.key, second.key], null, "Sport")
+    expect(doc).toEqual(snapshot)
+  })
+})
+
+describe("moveChannelsWithinGroup", () => {
+  function buildDoc() {
+    let doc = emptyCustomDoc()
+    const first = addChannel(doc, xtreamSource("p1", 1), { name: "A", group: "News" })
+    doc = first.doc
+    const second = addChannel(doc, xtreamSource("p1", 2), { name: "B", group: "News" })
+    doc = second.doc
+    const third = addChannel(doc, xtreamSource("p1", 3), { name: "C", group: "News" })
+    doc = third.doc
+    const fourth = addChannel(doc, xtreamSource("p1", 4), { name: "D", group: "Sport" })
+    doc = fourth.doc
+    const fifth = addChannel(doc, xtreamSource("p1", 5), { name: "E", group: "Sport" })
+    doc = fifth.doc
+    return {
+      doc,
+      first: first.channel,
+      second: second.channel,
+      third: third.channel,
+      fourth: fourth.channel,
+      fifth: fifth.channel,
+    }
+  }
+
+  it("moves an adjacent selection up as a block", () => {
+    const { doc, first, second, third } = buildDoc()
+    const result = moveChannelsWithinGroup(doc, [second.key, third.key], "up")
+    expect(result.channels.map((channel) => channel.key)).toEqual([
+      second.key,
+      third.key,
+      first.key,
+      doc.channels[3].key,
+      doc.channels[4].key,
+    ])
+  })
+
+  it("moves an adjacent selection down as a block", () => {
+    const { doc, first, second, third } = buildDoc()
+    const result = moveChannelsWithinGroup(doc, [first.key, second.key], "down")
+    expect(result.channels.map((channel) => channel.key)).toEqual([
+      third.key,
+      first.key,
+      second.key,
+      doc.channels[3].key,
+      doc.channels[4].key,
+    ])
+  })
+
+  it("does not move a selection already touching the top edge", () => {
+    const { doc, first, second } = buildDoc()
+    const result = moveChannelsWithinGroup(doc, [first.key, second.key], "up")
+    expect(result).toBe(doc)
+  })
+
+  it("does not move a selection already touching the bottom edge", () => {
+    const { doc, fourth, fifth } = buildDoc()
+    const result = moveChannelsWithinGroup(doc, [fourth.key, fifth.key], "down")
+    expect(result).toBe(doc)
+  })
+
+  it("processes a cross-group selection independently per group", () => {
+    const { doc, first, second, third, fourth, fifth } = buildDoc()
+    const result = moveChannelsWithinGroup(doc, [second.key, fifth.key], "up")
+    expect(result.channels.map((channel) => channel.key)).toEqual([
+      second.key,
+      first.key,
+      third.key,
+      fifth.key,
+      fourth.key,
+    ])
+  })
+
+  it("is a no-op for unknown keys", () => {
+    const { doc } = buildDoc()
+    const result = moveChannelsWithinGroup(doc, ["missing-key"], "up")
+    expect(result).toBe(doc)
+  })
+
+  it("does not mutate the input doc", () => {
+    const { doc, second, third } = buildDoc()
+    const snapshot = JSON.parse(JSON.stringify(doc))
+    moveChannelsWithinGroup(doc, [second.key, third.key], "up")
     expect(doc).toEqual(snapshot)
   })
 })
@@ -1121,6 +1349,76 @@ describe("resolveCustomChannels", () => {
     const malformedNoSourcesResolved = resolved.find((channel) => channel.id === 998)
     expect(malformedResolved?.unresolved).toBe(true)
     expect(malformedNoSourcesResolved?.unresolved).toBe(true)
+  })
+
+  it("resolves a header as a non-playable row that is never unresolved", () => {
+    let doc = emptyCustomDoc()
+    doc = addHeader(doc, "News", "Regional")
+
+    const resolved = resolveCustomChannels(doc, new Map())
+    expect(resolved).toHaveLength(1)
+    expect(resolved[0].isHeader).toBe(true)
+    expect(resolved[0].name).toBe("Regional")
+    expect(resolved[0].url).toBe("")
+    expect(resolved[0].logo).toBeNull()
+    expect(resolved[0].unresolved).toBeUndefined()
+  })
+})
+
+describe("headers survive channel mutations", () => {
+  it("keeps its kind through moveChannel and moveChannels", () => {
+    let doc = emptyCustomDoc()
+    doc = addChannel(doc, xtreamSource("p1", 1), { name: "A", group: "News" }).doc
+    doc = addHeader(doc, "News", "Regional")
+    const headerKey = doc.channels[doc.channels.length - 1].key
+
+    doc = moveChannel(doc, headerKey, doc.channels[0].key, "News")
+    expect(doc.channels.find((channel) => channel.key === headerKey)?.kind).toBe("header")
+
+    doc = moveChannels(doc, [headerKey], null, "Sport")
+    const moved = doc.channels.find((channel) => channel.key === headerKey)
+    expect(moved?.kind).toBe("header")
+    expect(moved?.group).toBe("Sport")
+  })
+
+  it("keeps its kind through moveChannelWithinGroup and moveChannelsWithinGroup", () => {
+    let doc = emptyCustomDoc()
+    doc = addChannel(doc, xtreamSource("p1", 1), { name: "A", group: "News" }).doc
+    doc = addHeader(doc, "News", "Regional")
+    const headerKey = doc.channels[doc.channels.length - 1].key
+
+    doc = moveChannelWithinGroup(doc, headerKey, "up")
+    expect(doc.channels.find((channel) => channel.key === headerKey)?.kind).toBe("header")
+
+    doc = moveChannelsWithinGroup(doc, [headerKey], "down")
+    expect(doc.channels.find((channel) => channel.key === headerKey)?.kind).toBe("header")
+  })
+
+  it("survives removeChannels, renameGroup, and removeGroup", () => {
+    let doc = emptyCustomDoc()
+    doc = addChannel(doc, xtreamSource("p1", 1), { name: "A", group: "News" }).doc
+    doc = addHeader(doc, "News", "Regional")
+    const headerKey = doc.channels[doc.channels.length - 1].key
+
+    doc = renameGroup(doc, "News", "World")
+    expect(doc.channels.find((channel) => channel.key === headerKey)?.group).toBe("World")
+    expect(doc.channels.find((channel) => channel.key === headerKey)?.kind).toBe("header")
+
+    doc = removeGroup(doc, "World")
+    const relocated = doc.channels.find((channel) => channel.key === headerKey)
+    expect(relocated?.group).toBe("Uncategorized")
+    expect(relocated?.kind).toBe("header")
+
+    doc = removeChannels(doc, [headerKey])
+    expect(doc.channels.find((channel) => channel.key === headerKey)).toBeUndefined()
+  })
+
+  it("accepts a name-only override patch via setOverrides", () => {
+    let doc = addHeader(emptyCustomDoc(), "News", "Regional")
+    const headerKey = doc.channels[0].key
+    doc = setOverrides(doc, headerKey, { name: "Local" })
+    expect(doc.channels[0].overrides.name).toBe("Local")
+    expect(doc.channels[0].kind).toBe("header")
   })
 })
 

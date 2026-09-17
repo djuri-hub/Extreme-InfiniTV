@@ -389,6 +389,7 @@ function revalidateInBackground(entryId, kind, ttlMs, fetcher) {
       const data = await fetcher()
       setCached(entryId, kind, data, ttlMs)
       _revalidateFailedAt.delete(key)
+      if (kind === "live" || kind === "m3u") invalidateCustomDependents(entryId).catch(() => {})
       try {
         document.dispatchEvent(
           new CustomEvent(EVT_REVALIDATED, { detail: { entryId, kind } })

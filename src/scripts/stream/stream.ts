@@ -639,6 +639,21 @@ function renderVirtual() {
   for (let i = startIdx; i < endIdx; i++) {
     const ch = filtered[i]
 
+    if (ch.isHeader) {
+      const headerRow = document.createElement("div")
+      headerRow.dataset.idx = String(i)
+      headerRow.style.height = `${ROW_H}px`
+      headerRow.className = "channel-row channel-row--header flex w-full items-center"
+      headerRow.dataset.header = "true"
+      headerRow.setAttribute("role", "presentation")
+      const label = document.createElement("div")
+      label.className = "channel-row-header-label truncate"
+      label.textContent = ch.name || ""
+      headerRow.appendChild(label)
+      frag.appendChild(headerRow)
+      continue
+    }
+
     const row = document.createElement("div")
     row.dataset.idx = String(i)
     row.style.height = `${ROW_H}px`
@@ -1320,15 +1335,19 @@ listEl?.addEventListener(
       Math.floor((listEl?.clientHeight || ROW_H) / ROW_H) - 1
     )
     let next = idx
+    let skipDirection = 1
     switch (e.key) {
-      case "ArrowDown": next = idx + 1; break
-      case "ArrowUp":   next = idx - 1; break
-      case "PageDown":  next = idx + pageSize; break
-      case "PageUp":    next = idx - pageSize; break
-      case "Home":      next = 0; break
-      case "End":       next = filtered.length - 1; break
+      case "ArrowDown": next = idx + 1; skipDirection = 1; break
+      case "ArrowUp":   next = idx - 1; skipDirection = -1; break
+      case "PageDown":  next = idx + pageSize; skipDirection = 1; break
+      case "PageUp":    next = idx - pageSize; skipDirection = -1; break
+      case "Home":      next = 0; skipDirection = 1; break
+      case "End":       next = filtered.length - 1; skipDirection = -1; break
     }
     next = Math.max(0, Math.min(filtered.length - 1, next))
+    // Header rows are non-focusable: keep stepping in the same direction past them.
+    while (next >= 0 && next < filtered.length && filtered[next]?.isHeader) next += skipDirection
+    if (next < 0 || next >= filtered.length) return
     if (next === idx) return
     e.preventDefault()
     e.stopPropagation()
@@ -1375,7 +1394,7 @@ function commitDigitBuffer() {
   const idx = num - 1
   if (idx >= filtered.length) return
   const ch = filtered[idx]
-  if (!ch) return
+  if (!ch || ch.isHeader) return
   focusByIdx(idx)
   play(ch.id, ch.name)
 }
@@ -1395,9 +1414,18 @@ function tuneRelativeChannel(e, delta, reason) {
   const currentIdx = currentlyPlayingId != null
     ? filtered.findIndex((channel) => channel.id === currentlyPlayingId)
     : -1
-  const nextIdx = stepChannelIndex(currentIdx, filtered.length, delta)
-  if (nextIdx == null) return
-  const channel = filtered[nextIdx]
+  let nextIdx = currentIdx
+  let channel = null
+  // Header rows are non-playable: keep stepping past them, up to one full lap.
+  for (let attempt = 0; attempt < filtered.length; attempt++) {
+    nextIdx = stepChannelIndex(nextIdx, filtered.length, delta)
+    if (nextIdx == null) return
+    const candidate = filtered[nextIdx]
+    if (candidate && !candidate.isHeader) {
+      channel = candidate
+      break
+    }
+  }
   if (!channel) return
   e.preventDefault()
   focusByIdx(nextIdx)
@@ -1621,6 +1649,8 @@ const applyFilter = () => {
   const sortMode = activePlaylistId
     ? getViewSort(activePlaylistId, "live")
     : "default"
+  // Headers only make sense in the playlist's own order with no active search; any reorder scatters them.
+  if (sortMode !== "default" || tokens.length) out = out.filter((ch) => !ch.isHeader)
   out = sortChannelsForView(out, sortMode, scoreById)
 
   renderListStatus(out.length)
@@ -1725,7 +1755,7 @@ function maybeAutoplayFromUrl() {
   if (!Number.isFinite(id) || id == null) return
   autoplayConsumed = true
   const ch = all.find((c) => c.id === id)
-  if (!ch) {
+  if (!ch || ch.isHeader) {
     toast({ title: t("stream.toast.channelUnavailable") })
     return
   }
@@ -4303,6 +4333,7 @@ async function launchNativeLiveSession(initialStreamId, initialName) {
 
   const channelInputs = []
   for (const channel of all) {
+    if (channel.isHeader) continue
     let streamUrl = ""
     const isDirectUrlChannel = hasDirectUrl(channel.id)
     if (channel.id === initialStreamId) {

@@ -5,11 +5,16 @@ import {
   loadCustomDoc,
   saveCustomDoc,
   addChannel,
+  addHeader,
+  isHeaderChannel,
   removeChannels,
   moveChannel,
+  moveChannels,
   moveChannelWithinGroup,
+  moveChannelsWithinGroup,
   setOverrides,
   setCatchup,
+  setChannelGroup,
   renameGroup,
   reorderGroups,
   removeGroup,
@@ -51,6 +56,9 @@ let selectedSourceEntryId = ""
 let selectedSourceEntryType = ""
 const selectedIds = new Set<number>()
 let lastClickedIndex = -1
+
+const selectedChannelKeys = new Set<string>()
+let lastSelectedChannelKey: string | null = null
 
 let orderedChannels: CustomChannel[] = []
 let resolvedChannels: ResolvedCustomChannel[] = []
@@ -112,6 +120,13 @@ const paneTabSourceBtn = byId<HTMLButtonElement>("editor-pane-tab-source")
 const paneTabPlaylistBtn = byId<HTMLButtonElement>("editor-pane-tab-playlist")
 
 const groupsContainer = byId<HTMLElement>("editor-groups")
+const bulkActionsBar = byId<HTMLElement>("editor-bulk-actions-bar")
+const bulkSelectedCountEl = byId<HTMLElement>("editor-selected-count")
+const bulkMoveUpBtn = byId<HTMLButtonElement>("editor-bulk-move-up-btn")
+const bulkMoveDownBtn = byId<HTMLButtonElement>("editor-bulk-move-down-btn")
+const bulkMoveToGroupBtn = byId<HTMLButtonElement>("editor-bulk-move-to-group-btn")
+const bulkRemoveBtn = byId<HTMLButtonElement>("editor-bulk-remove-btn")
+const bulkClearBtn = byId<HTMLButtonElement>("editor-bulk-clear-btn")
 const emptyStateEl = byId<HTMLElement>("editor-empty-state")
 const emptyAddUrlBtn = byId<HTMLButtonElement>("editor-empty-add-url-btn")
 const emptySourceBtn = byId<HTMLButtonElement>("editor-empty-source-btn")
@@ -161,6 +176,7 @@ interface MenuItemDef {
   onClick: () => void
   destructive?: boolean
   disabled?: boolean
+  separatorBefore?: boolean
 }
 
 const MENU_ID = "editor-popover-menu"
@@ -225,6 +241,12 @@ function openMenu(anchor: HTMLButtonElement, items: MenuItemDef[], ariaLabel: st
   menu.setAttribute("role", "menu")
   menu.setAttribute("aria-label", ariaLabel)
   for (const item of items) {
+    if (item.separatorBefore) {
+      const separator = document.createElement("div")
+      separator.setAttribute("role", "separator")
+      separator.className = "my-1 h-px bg-line"
+      menu.appendChild(separator)
+    }
     const itemBtn = document.createElement("button")
     itemBtn.type = "button"
     itemBtn.setAttribute("role", "menuitem")
@@ -377,12 +399,155 @@ function commitDoc(nextDoc: CustomPlaylistDoc): void {
   doc = nextDoc
   orderedChannels = orderedChannelsByGroup(nextDoc)
   presentSourceKeySet = presentSourceKeys(nextDoc)
+  pruneSelection()
   renderChannelCount()
   renderGroups()
+  updateBulkActionsBar()
   updateUndoButton()
   scheduleSave()
   scheduleResolvedRefresh()
   scheduleSourceRender()
+}
+
+// ---------------------------------------------------------------------------
+// Right-pane multi-select
+// ---------------------------------------------------------------------------
+function pruneSelection(): void {
+  if (!selectedChannelKeys.size) return
+  const liveKeys = new Set(doc.channels.map((channel) => channel.key))
+  for (const key of selectedChannelKeys) {
+    if (!liveKeys.has(key)) selectedChannelKeys.delete(key)
+  }
+  if (lastSelectedChannelKey && !liveKeys.has(lastSelectedChannelKey)) lastSelectedChannelKey = null
+}
+
+function updateGroupSelectCheckbox(checkbox: HTMLInputElement, groupChannelKeys: string[]): void {
+  if (!groupChannelKeys.length) {
+    checkbox.checked = false
+    checkbox.indeterminate = false
+    return
+  }
+  const selectedCount = groupChannelKeys.filter((key) => selectedChannelKeys.has(key)).length
+  checkbox.checked = selectedCount === groupChannelKeys.length
+  checkbox.indeterminate = selectedCount > 0 && selectedCount < groupChannelKeys.length
+}
+
+function updateBulkActionsBar(): void {
+  const count = selectedChannelKeys.size
+  bulkActionsBar?.classList.toggle("hidden", count === 0)
+  bulkActionsBar?.classList.toggle("flex", count > 0)
+  if (bulkSelectedCountEl) bulkSelectedCountEl.textContent = count ? t("editor.selectedCount", { count }) : ""
+}
+
+// Lightweight DOM sync for a pure selection change: never rebuilds rows, so it can't lose focus.
+function syncSelectionUI(): void {
+  for (const cached of channelRowCache.values()) {
+    const channelKey = cached.refs.el.dataset.key
+    if (!channelKey) continue
+    const selected = selectedChannelKeys.has(channelKey)
+    cached.refs.checkbox.checked = selected
+    cached.refs.el.dataset.selected = selected ? "true" : "false"
+  }
+  if (groupsContainer) {
+    const groupKeys = new Map<string, string[]>()
+    for (const channel of orderedChannels) {
+      const bucket = groupKeys.get(channel.group)
+      if (bucket) bucket.push(channel.key)
+      else groupKeys.set(channel.group, [channel.key])
+    }
+    groupsContainer.querySelectorAll<HTMLElement>(".editor-group-section[data-group]").forEach((section) => {
+      const groupName = section.dataset.group
+      const checkbox = section.querySelector<HTMLInputElement>('[data-action="select-group"]')
+      if (groupName && checkbox) updateGroupSelectCheckbox(checkbox, groupKeys.get(groupName) || [])
+    })
+  }
+  updateBulkActionsBar()
+}
+
+function toggleChannelSelection(key: string): void {
+  if (selectedChannelKeys.has(key)) selectedChannelKeys.delete(key)
+  else selectedChannelKeys.add(key)
+  syncSelectionUI()
+}
+
+function toggleGroupSelection(groupChannelKeys: string[]): void {
+  const allSelected = groupChannelKeys.length > 0 && groupChannelKeys.every((key) => selectedChannelKeys.has(key))
+  for (const key of groupChannelKeys) {
+    if (allSelected) selectedChannelKeys.delete(key)
+    else selectedChannelKeys.add(key)
+  }
+  syncSelectionUI()
+}
+
+function selectGroupChannels(groupChannelKeys: string[]): void {
+  for (const key of groupChannelKeys) selectedChannelKeys.add(key)
+  syncSelectionUI()
+}
+
+function deselectGroupChannels(groupChannelKeys: string[]): void {
+  for (const key of groupChannelKeys) selectedChannelKeys.delete(key)
+  syncSelectionUI()
+}
+
+function clearSelection(): void {
+  if (!selectedChannelKeys.size) return
+  selectedChannelKeys.clear()
+  lastSelectedChannelKey = null
+  syncSelectionUI()
+}
+
+// Shift-range only spans rows within the same group, computed over that group's rendered order.
+function handleChannelRowSelectClick(channel: CustomChannel, event: MouseEvent): void {
+  if (event.shiftKey && lastSelectedChannelKey) {
+    const lastChannel = doc.channels.find((item) => item.key === lastSelectedChannelKey)
+    if (lastChannel && lastChannel.group === channel.group) {
+      const groupOrder = orderedChannels.filter((item) => item.group === channel.group)
+      const fromIndex = groupOrder.findIndex((item) => item.key === lastSelectedChannelKey)
+      const toIndex = groupOrder.findIndex((item) => item.key === channel.key)
+      if (fromIndex !== -1 && toIndex !== -1) {
+        const [start, end] = fromIndex < toIndex ? [fromIndex, toIndex] : [toIndex, fromIndex]
+        for (let i = start; i <= end; i++) selectedChannelKeys.add(groupOrder[i].key)
+        lastSelectedChannelKey = channel.key
+        syncSelectionUI()
+        return
+      }
+    }
+  }
+  toggleChannelSelection(channel.key)
+  lastSelectedChannelKey = channel.key
+}
+
+function removeSelectedChannelsWithUndo(): void {
+  const keys = [...selectedChannelKeys]
+  if (!keys.length) return
+  applyDoc(removeChannels(doc, keys))
+  toastSuccess(tCount("editor.toastChannelsRemoved", keys.length), {
+    action: { label: t("common.undo"), onClick: () => undo() },
+  })
+}
+
+function openBulkMoveToGroupMenu(trigger: HTMLButtonElement): void {
+  const keys = [...selectedChannelKeys]
+  if (!keys.length) return
+  const items: MenuItemDef[] = doc.groups.map((group) => ({
+    key: `group:${group}`,
+    label: group,
+    onClick: () => applyDoc(setChannelGroup(doc, keys, group)),
+  }))
+  openMenu(trigger, items, t("editor.moveToGroupLabel"))
+}
+
+function wireSelectionEscape(): void {
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.key !== "Escape") return
+      if (!selectedChannelKeys.size || menuEl || touchDragState || document.querySelector("dialog[open]")) return
+      event.preventDefault()
+      clearSelection()
+    },
+    true
+  )
 }
 
 // Single chokepoint for every doc mutation: undo snapshot, debounced persist, re-render.
@@ -417,7 +582,8 @@ function updateUndoButton(): void {
 // Header
 // ---------------------------------------------------------------------------
 function renderChannelCount(): void {
-  if (channelCountEl) channelCountEl.textContent = tCount("editor.channelCount", doc.channels.length)
+  const count = doc.channels.filter((channel) => !isHeaderChannel(channel)).length
+  if (channelCountEl) channelCountEl.textContent = tCount("editor.channelCount", count)
 }
 
 function saveTitleNow(): void {
@@ -891,6 +1057,7 @@ function restoreFocus(saved: FocusSnapshot | null): void {
 // ---------------------------------------------------------------------------
 interface ChannelRowRefs {
   el: HTMLElement
+  checkbox: HTMLInputElement
   upBtn: HTMLButtonElement
   downBtn: HTMLButtonElement
 }
@@ -902,6 +1069,7 @@ function computeRowSignature(
   sourceTitle: string | null
 ): string {
   return JSON.stringify([
+    channel.kind ?? null,
     channel.group,
     channel.overrides.name,
     channel.overrides.logo,
@@ -934,6 +1102,9 @@ function getOrBuildChannelRow(
   }
   refs.upBtn.disabled = rowIdx === 0
   refs.downBtn.disabled = rowIdx === groupSize - 1
+  const selected = selectedChannelKeys.has(channel.key)
+  refs.checkbox.checked = selected
+  refs.el.dataset.selected = selected ? "true" : "false"
   return refs.el
 }
 
@@ -983,6 +1154,8 @@ function renderGroups(): void {
 }
 
 function renderGroupsNow(): void {
+  // The touch drag reads live DOM refs; a re-render mid-drag would strand it, so abort first.
+  if (touchDragState) cancelTouchDrag()
   refreshGroupsDatalist()
   if (!groupsContainer || !emptyStateEl) return
   const savedFocus = captureFocus()
@@ -1038,6 +1211,18 @@ function buildGroupSection(
   const header = document.createElement("div")
   header.className = "editor-group-header flex items-center gap-1.5"
 
+  const groupChannelKeys = rows.map((row) => row.channel.key)
+  const selectGroupCheckbox = document.createElement("input")
+  selectGroupCheckbox.type = "checkbox"
+  selectGroupCheckbox.className = "size-4 shrink-0"
+  selectGroupCheckbox.dataset.action = "select-group"
+  selectGroupCheckbox.setAttribute("aria-label", t("editor.selectGroup", { name: groupName }))
+  updateGroupSelectCheckbox(selectGroupCheckbox, groupChannelKeys)
+  selectGroupCheckbox.addEventListener("click", (event) => {
+    event.stopPropagation()
+    toggleGroupSelection(groupChannelKeys)
+  })
+
   const collapseBtn = iconButton(
     ICON_CHEVRON_DOWN,
     collapsed ? t("editor.expandGroup") : t("editor.collapseGroup")
@@ -1077,13 +1262,13 @@ function buildGroupSection(
 
   const count = document.createElement("span")
   count.className = "text-2xs text-fg-3 tabular-nums shrink-0"
-  count.textContent = String(rows.length)
+  count.textContent = String(rows.filter((row) => !isHeaderChannel(row.channel)).length)
 
   const moreBtn = iconButton(ICON_DOTS_VERTICAL, t("common.moreOptionsAria", { title: groupName }))
   moreBtn.dataset.action = "more"
-  moreBtn.addEventListener("click", () => openGroupMenu(moreBtn, groupName, groupIdx, groupCount))
+  moreBtn.addEventListener("click", () => openGroupMenu(moreBtn, groupName, groupIdx, groupCount, groupChannelKeys))
 
-  header.append(collapseBtn, nameButton, count, moreBtn)
+  header.append(selectGroupCheckbox, collapseBtn, nameButton, count, moreBtn)
   addGroupDropHandlers(header, groupName)
   section.appendChild(header)
 
@@ -1158,9 +1343,30 @@ function deleteGroupWithToast(groupName: string): void {
   })
 }
 
-function openGroupMenu(anchor: HTMLButtonElement, groupName: string, groupIdx: number, groupCount: number): void {
+function addHeaderToGroup(groupName: string): void {
+  const newId = doc.nextId
+  const nextDoc = addHeader(doc, groupName, t("editor.headerDefaultName"))
+  applyDoc(nextDoc)
+  const header = nextDoc.channels.find((channel) => channel.id === newId && isHeaderChannel(channel))
+  if (!header) return
+  const row = groupsContainer?.querySelector<HTMLElement>(`.editor-channel-row[data-key="${CSS.escape(header.key)}"]`)
+  const nameRow = row?.querySelector<HTMLElement>('[data-role="name-row"]')
+  const nameEl = row?.querySelector<HTMLElement>('[data-role="name-text"]')
+  if (nameRow && nameEl) startRowRename(nameRow, nameEl, header)
+}
+
+function openGroupMenu(
+  anchor: HTMLButtonElement,
+  groupName: string,
+  groupIdx: number,
+  groupCount: number,
+  groupChannelKeys: string[]
+): void {
+  const allSelected = groupChannelKeys.length > 0 && groupChannelKeys.every((key) => selectedChannelKeys.has(key))
+  const anySelected = groupChannelKeys.some((key) => selectedChannelKeys.has(key))
   const items: MenuItemDef[] = [
     { key: "rename", label: t("editor.rename"), onClick: () => focusGroupNameInput(groupName) },
+    { key: "add-header", label: t("editor.addHeader"), onClick: () => addHeaderToGroup(groupName) },
     {
       key: "up",
       label: t("editor.moveGroupUp"),
@@ -1173,10 +1379,42 @@ function openGroupMenu(anchor: HTMLButtonElement, groupName: string, groupIdx: n
       disabled: groupIdx === groupCount - 1,
       onClick: () => applyDoc(reorderGroupPosition(doc, groupName, "down")),
     },
+    {
+      key: "select-all",
+      label: t("editor.selectGroup", { name: groupName }),
+      disabled: !groupChannelKeys.length || allSelected,
+      onClick: () => selectGroupChannels(groupChannelKeys),
+    },
+    {
+      key: "deselect-all",
+      label: t("editor.deselectGroup", { name: groupName }),
+      disabled: !anySelected,
+      onClick: () => deselectGroupChannels(groupChannelKeys),
+    },
     { key: "delete", label: t("editor.deleteGroup"), destructive: true, onClick: () => deleteGroupWithToast(groupName) },
   ]
   openMenu(anchor, items, t("common.moreOptionsAria", { title: groupName }))
   menuAnchorGroupName = groupName
+}
+
+// A block drag encodes its keys as a JSON array; a single-row drag is just the plain key string.
+function parseDraggedKeys(dataTransfer: DataTransfer | null): string[] {
+  const raw = dataTransfer?.getData("text/plain")
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed)) return parsed.filter((item): item is string => typeof item === "string")
+  } catch {
+    // Not JSON: a single plain key.
+  }
+  return [raw]
+}
+
+// Single chokepoint for applying a resolved drop: shared by the mouse HTML5 path and the touch pointer path below.
+function applyChannelDrop(draggedKeys: string[], beforeKey: string | null, group: string): void {
+  if (!draggedKeys.length) return
+  if (beforeKey && draggedKeys.includes(beforeKey)) return
+  applyDoc(moveChannels(doc, draggedKeys, beforeKey, group))
 }
 
 function addGroupDropHandlers(listEl: HTMLElement, groupName: string): void {
@@ -1191,9 +1429,297 @@ function addGroupDropHandlers(listEl: HTMLElement, groupName: string): void {
     listEl.dataset.dropTarget = "false"
     if (event.target !== listEl) return
     event.preventDefault()
-    const draggedKey = event.dataTransfer?.getData("text/plain")
-    if (!draggedKey) return
-    applyDoc(moveChannel(doc, draggedKey, null, groupName))
+    applyChannelDrop(parseDraggedKeys(event.dataTransfer), null, groupName)
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Touch pointer drag-and-drop (coarse pointers only; the HTML5 DnD above stays mouse-only)
+// ---------------------------------------------------------------------------
+const TOUCH_LONG_PRESS_MS = 350
+const TOUCH_MOVE_CANCEL_PX = 8
+const TOUCH_AUTOSCROLL_EDGE_PX = 48
+const TOUCH_AUTOSCROLL_MAX_PX = 16
+
+interface PendingLongPress {
+  pointerId: number
+  startX: number
+  startY: number
+  timer: ReturnType<typeof setTimeout>
+}
+
+interface TouchDragState {
+  pointerId: number
+  row: HTMLElement
+  draggedKeys: string[]
+  scrollContainer: HTMLElement
+  dropTargetEl: HTMLElement | null
+  autoScrollFrame: number | null
+  ghostEl: HTMLElement
+  grabOffsetX: number
+  grabOffsetY: number
+}
+
+let pendingLongPress: PendingLongPress | null = null
+let touchDragState: TouchDragState | null = null
+
+function clearPendingLongPress(): void {
+  if (!pendingLongPress) return
+  clearTimeout(pendingLongPress.timer)
+  pendingLongPress = null
+}
+
+function isInteractiveDragTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && !!target.closest("input, button, a, select, textarea")
+}
+
+// Walks up to the nearest scrollable ancestor, falling back to the document (the right pane
+// only scrolls internally at the lg breakpoint; below that the whole page scrolls instead).
+function findScrollableAncestor(startEl: HTMLElement): HTMLElement {
+  let node: HTMLElement | null = startEl.parentElement
+  while (node && node !== document.body) {
+    const style = getComputedStyle(node)
+    if ((style.overflowY === "auto" || style.overflowY === "scroll") && node.scrollHeight > node.clientHeight) {
+      return node
+    }
+    node = node.parentElement
+  }
+  return (document.scrollingElement as HTMLElement | null) || document.documentElement
+}
+
+function setDraggedRowsVisual(keys: string[], dragging: boolean): void {
+  for (const key of keys) {
+    const cached = channelRowCache.get(key)
+    if (cached) cached.refs.el.dataset.dragging = dragging ? "true" : "false"
+  }
+}
+
+const TOUCH_DRAG_GHOST_SCALE = 1.02
+const TOUCH_DRAG_GHOST_ENTRANCE_MS = 160
+
+// Neutralizes every focusable/clickable descendant of the ghost clone; the ghost is decorative
+// only, real interaction still targets the source row underneath.
+function makeGhostControlsInert(ghostEl: HTMLElement): void {
+  for (const control of ghostEl.querySelectorAll<HTMLElement>("input, button, a, select, textarea")) {
+    control.style.pointerEvents = "none"
+    control.setAttribute("aria-hidden", "true")
+    control.setAttribute("inert", "")
+  }
+}
+
+function createTouchDragGhost(row: HTMLElement, rowRect: DOMRect, draggedCount: number): HTMLElement {
+  const ghostEl = row.cloneNode(true) as HTMLElement
+  ghostEl.removeAttribute("id")
+  ghostEl.removeAttribute("data-key")
+  ghostEl.className = `${row.className} editor-drag-ghost`
+  ghostEl.style.width = `${rowRect.width}px`
+  ghostEl.setAttribute("aria-hidden", "true")
+  ghostEl.setAttribute("inert", "")
+  makeGhostControlsInert(ghostEl)
+  if (draggedCount > 1) {
+    const badge = document.createElement("span")
+    badge.className = "editor-drag-ghost-badge"
+    badge.textContent = t("editor.selectedCount", { count: draggedCount })
+    ghostEl.appendChild(badge)
+  }
+  return ghostEl
+}
+
+function positionTouchDragGhost(ghostEl: HTMLElement, clientX: number, clientY: number, scale: number): void {
+  ghostEl.style.transform = `translate3d(${clientX}px, ${clientY}px, 0) scale(${scale})`
+}
+
+function updateTouchDragGhost(state: TouchDragState, clientX: number, clientY: number): void {
+  positionTouchDragGhost(state.ghostEl, clientX - state.grabOffsetX, clientY - state.grabOffsetY, TOUCH_DRAG_GHOST_SCALE)
+}
+
+// Same target shape mouse dragover resolves per-row/per-group, computed instead via hit-testing
+// since a custom pointer drag has no native drop target.
+function resolveTouchDropTarget(
+  clientX: number,
+  clientY: number
+): { beforeKey: string | null; group: string; el: HTMLElement } | null {
+  const elementAtPoint = document.elementFromPoint(clientX, clientY)
+  if (!elementAtPoint) return null
+  const rowEl = elementAtPoint.closest<HTMLElement>(".editor-channel-row[data-key]")
+  if (rowEl?.dataset.key) {
+    const targetChannel = doc.channels.find((channel) => channel.key === rowEl.dataset.key)
+    if (!targetChannel) return null
+    const rect = rowEl.getBoundingClientRect()
+    if (clientY <= rect.top + rect.height / 2) {
+      return { beforeKey: targetChannel.key, group: targetChannel.group, el: rowEl }
+    }
+    const groupOrder = orderedChannels.filter((channel) => channel.group === targetChannel.group)
+    const targetIndex = groupOrder.findIndex((channel) => channel.key === targetChannel.key)
+    const nextChannel = groupOrder[targetIndex + 1]
+    return { beforeKey: nextChannel ? nextChannel.key : null, group: targetChannel.group, el: rowEl }
+  }
+  const sectionEl = elementAtPoint.closest<HTMLElement>(".editor-group-section[data-group]")
+  if (sectionEl?.dataset.group) {
+    const header = sectionEl.querySelector<HTMLElement>(".editor-group-header")
+    return { beforeKey: null, group: sectionEl.dataset.group, el: header || sectionEl }
+  }
+  return null
+}
+
+function setTouchDropIndicator(state: TouchDragState, target: { el: HTMLElement } | null): void {
+  const nextEl = target?.el ?? null
+  if (state.dropTargetEl === nextEl) return
+  if (state.dropTargetEl) state.dropTargetEl.dataset.dropTarget = "false"
+  state.dropTargetEl = nextEl
+  if (nextEl) nextEl.dataset.dropTarget = "true"
+}
+
+function stopTouchAutoScroll(state: TouchDragState): void {
+  if (state.autoScrollFrame == null) return
+  cancelAnimationFrame(state.autoScrollFrame)
+  state.autoScrollFrame = null
+}
+
+function runTouchAutoScroll(state: TouchDragState, clientY: number): void {
+  const container = state.scrollContainer
+  const isViewportScroll = container === document.scrollingElement || container === document.documentElement
+  const top = isViewportScroll ? 0 : container.getBoundingClientRect().top
+  const bottom = isViewportScroll ? window.innerHeight : container.getBoundingClientRect().bottom
+  let delta = 0
+  if (clientY < top + TOUCH_AUTOSCROLL_EDGE_PX) {
+    delta = -TOUCH_AUTOSCROLL_MAX_PX * (1 - Math.max(0, clientY - top) / TOUCH_AUTOSCROLL_EDGE_PX)
+  } else if (clientY > bottom - TOUCH_AUTOSCROLL_EDGE_PX) {
+    delta = TOUCH_AUTOSCROLL_MAX_PX * (1 - Math.max(0, bottom - clientY) / TOUCH_AUTOSCROLL_EDGE_PX)
+  }
+  stopTouchAutoScroll(state)
+  if (delta === 0) return
+  const step = (): void => {
+    if (touchDragState !== state) return
+    container.scrollTop += delta
+    state.autoScrollFrame = requestAnimationFrame(step)
+  }
+  state.autoScrollFrame = requestAnimationFrame(step)
+}
+
+function onTouchDragKeydown(event: KeyboardEvent): void {
+  if (event.key !== "Escape" || !touchDragState) return
+  event.preventDefault()
+  event.stopPropagation()
+  cancelTouchDrag()
+}
+
+function cancelTouchDrag(): void {
+  const state = touchDragState
+  if (!state) return
+  touchDragState = null
+  stopTouchAutoScroll(state)
+  setDraggedRowsVisual(state.draggedKeys, false)
+  if (state.dropTargetEl) state.dropTargetEl.dataset.dropTarget = "false"
+  state.row.style.touchAction = ""
+  if (state.row.hasPointerCapture(state.pointerId)) state.row.releasePointerCapture(state.pointerId)
+  document.removeEventListener("keydown", onTouchDragKeydown, true)
+  state.ghostEl.remove()
+}
+
+function beginTouchDrag(pointerId: number, row: HTMLElement, channelKey: string, clientX: number, clientY: number): void {
+  const channel = doc.channels.find((item) => item.key === channelKey)
+  if (!channel) return
+  const draggedKeys = selectedChannelKeys.has(channelKey) ? [...selectedChannelKeys] : [channelKey]
+  const rowRect = row.getBoundingClientRect()
+  const grabOffsetX = clientX - rowRect.left
+  const grabOffsetY = clientY - rowRect.top
+  const ghostEl = createTouchDragGhost(row, rowRect, draggedKeys.length)
+  document.body.appendChild(ghostEl)
+  positionTouchDragGhost(ghostEl, clientX - grabOffsetX, clientY - grabOffsetY, 1)
+  // Bump to the settled scale/shadow on the next frame so the pickup transitions in, then drop the
+  // transition once it lands so later drag moves track the finger 1:1 instead of easing behind it.
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      ghostEl.classList.add("editor-drag-ghost--lifted")
+      positionTouchDragGhost(ghostEl, clientX - grabOffsetX, clientY - grabOffsetY, TOUCH_DRAG_GHOST_SCALE)
+    })
+  })
+  setTimeout(() => { ghostEl.style.transition = "none" }, TOUCH_DRAG_GHOST_ENTRANCE_MS)
+  row.setPointerCapture(pointerId)
+  row.style.touchAction = "none"
+  setDraggedRowsVisual(draggedKeys, true)
+  navigator.vibrate?.(10)
+  touchDragState = {
+    pointerId,
+    row,
+    draggedKeys,
+    scrollContainer: findScrollableAncestor(row),
+    dropTargetEl: null,
+    autoScrollFrame: null,
+    ghostEl,
+    grabOffsetX,
+    grabOffsetY,
+  }
+  document.addEventListener("keydown", onTouchDragKeydown, true)
+}
+
+function finishTouchDrag(clientX: number, clientY: number): void {
+  const state = touchDragState
+  if (!state) return
+  const target = resolveTouchDropTarget(clientX, clientY)
+  const draggedKeys = state.draggedKeys
+  cancelTouchDrag()
+  if (!target) return
+  applyChannelDrop(draggedKeys, target.beforeKey, target.group)
+}
+
+function suppressNextRowClick(row: HTMLElement): void {
+  const onClick = (event: MouseEvent): void => {
+    event.preventDefault()
+    event.stopPropagation()
+    row.removeEventListener("click", onClick, true)
+  }
+  row.addEventListener("click", onClick, true)
+  setTimeout(() => row.removeEventListener("click", onClick, true), 0)
+}
+
+function attachTouchReorderHandlers(row: HTMLElement, channel: CustomChannel): void {
+  row.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse" || event.button !== 0) return
+    if (isInteractiveDragTarget(event.target)) return
+    if (touchDragState || pendingLongPress) return
+    const pointerId = event.pointerId
+    const timer = setTimeout(() => {
+      if (!pendingLongPress || pendingLongPress.pointerId !== pointerId) return
+      pendingLongPress = null
+      beginTouchDrag(pointerId, row, channel.key, event.clientX, event.clientY)
+    }, TOUCH_LONG_PRESS_MS)
+    pendingLongPress = { pointerId, startX: event.clientX, startY: event.clientY, timer }
+  })
+
+  row.addEventListener("pointermove", (event) => {
+    if (pendingLongPress && pendingLongPress.pointerId === event.pointerId) {
+      const deltaX = event.clientX - pendingLongPress.startX
+      const deltaY = event.clientY - pendingLongPress.startY
+      if (Math.hypot(deltaX, deltaY) > TOUCH_MOVE_CANCEL_PX) clearPendingLongPress()
+      return
+    }
+    if (!touchDragState || touchDragState.pointerId !== event.pointerId) return
+    event.preventDefault()
+    updateTouchDragGhost(touchDragState, event.clientX, event.clientY)
+    const target = resolveTouchDropTarget(event.clientX, event.clientY)
+    setTouchDropIndicator(touchDragState, target)
+    runTouchAutoScroll(touchDragState, event.clientY)
+  })
+
+  row.addEventListener("pointerup", (event) => {
+    if (pendingLongPress && pendingLongPress.pointerId === event.pointerId) {
+      clearPendingLongPress()
+      return
+    }
+    if (!touchDragState || touchDragState.pointerId !== event.pointerId) return
+    suppressNextRowClick(row)
+    finishTouchDrag(event.clientX, event.clientY)
+  })
+
+  row.addEventListener("pointercancel", (event) => {
+    if (pendingLongPress && pendingLongPress.pointerId === event.pointerId) {
+      clearPendingLongPress()
+      return
+    }
+    if (!touchDragState || touchDragState.pointerId !== event.pointerId) return
+    cancelTouchDrag()
   })
 }
 
@@ -1207,6 +1733,7 @@ function buildMetaSegments(
   sourceTitle: string | null,
   status: LinkCheckStatus | undefined
 ): MetaSegment[] {
+  if (isHeaderChannel(channel)) return []
   const segments: MetaSegment[] = []
   const chno = channel.overrides.chno ?? resolved?.chno
   if (chno != null) segments.push({ text: String(chno) })
@@ -1303,11 +1830,50 @@ function openMoveToGroupMenu(trigger: HTMLButtonElement, channel: CustomChannel)
   menuAnchorRowKey = channel.key
 }
 
+// When the opened row is part of a multi-selection, the menu acts on the whole selection instead of just this row.
+function openBulkRowMenu(trigger: HTMLButtonElement, anchorKey: string): void {
+  const keys = [...selectedChannelKeys]
+  const items: MenuItemDef[] = [
+    {
+      key: "move-up",
+      label: t("editor.moveUp"),
+      disabled: moveChannelsWithinGroup(doc, keys, "up") === doc,
+      onClick: () => applyDoc(moveChannelsWithinGroup(doc, keys, "up")),
+    },
+    {
+      key: "move-down",
+      label: t("editor.moveDown"),
+      disabled: moveChannelsWithinGroup(doc, keys, "down") === doc,
+      onClick: () => applyDoc(moveChannelsWithinGroup(doc, keys, "down")),
+    },
+    {
+      key: "move-to-group",
+      label: t("editor.moveToGroupLabel"),
+      disabled: doc.groups.length < 2,
+      onClick: () => openBulkMoveToGroupMenu(trigger),
+    },
+    {
+      key: "remove",
+      label: t("editor.removeSelected"),
+      destructive: true,
+      onClick: () => removeSelectedChannelsWithUndo(),
+    },
+    { key: "clear", label: t("editor.clearSelection"), separatorBefore: true, onClick: () => clearSelection() },
+  ]
+  openMenu(trigger, items, t("common.moreOptionsAria", { title: t("editor.selectedCount", { count: keys.length }) }))
+  menuAnchorRowKey = anchorKey
+}
+
 function openRowMenu(trigger: HTMLButtonElement, channel: CustomChannel): void {
+  if (selectedChannelKeys.size > 1 && selectedChannelKeys.has(channel.key)) {
+    openBulkRowMenu(trigger, channel.key)
+    return
+  }
+  const isHeader = isHeaderChannel(channel)
   const resolved = findResolved(channel)
   const displayName = channel.overrides.name ?? resolved?.name ?? ""
   const items: MenuItemDef[] = []
-  if (!resolved?.unresolved) {
+  if (isHeader || !resolved?.unresolved) {
     items.push({
       key: "rename",
       label: t("editor.rename"),
@@ -1325,12 +1891,12 @@ function openRowMenu(trigger: HTMLButtonElement, channel: CustomChannel): void {
     disabled: doc.groups.length < 2,
     onClick: () => openMoveToGroupMenu(trigger, channel),
   })
-  if (!resolved?.unresolved) {
+  if (!isHeader && !resolved?.unresolved) {
     items.push({ key: "edit", label: t("editor.editDetails"), onClick: () => void openEditDialog(channel) })
   }
   items.push({
     key: "remove",
-    label: t("editor.removeChannel"),
+    label: isHeader ? t("editor.removeHeader") : t("editor.removeChannel"),
     destructive: true,
     onClick: () => removeChannelWithUndo(channel, displayName),
   })
@@ -1343,24 +1909,43 @@ function buildChannelRow(
   resolved: ResolvedCustomChannel | undefined,
   sourceTitle: string | null
 ): ChannelRowRefs {
+  const isHeader = isHeaderChannel(channel)
   const row = document.createElement("div")
-  row.className = "editor-channel-row flex items-center gap-2 rounded-lg border border-line bg-bg px-2 py-1.5"
+  row.className = isHeader
+    ? "editor-channel-row editor-header-row flex items-center gap-2 rounded-lg border border-line bg-surface-2/60 px-2 py-1.5"
+    : "editor-channel-row flex items-center gap-2 rounded-lg border border-line bg-bg px-2 py-1.5"
   row.dataset.key = channel.key
+  if (isHeader) row.dataset.kind = "header"
 
-  // Drag-reorder is mouse-only; touch uses the Move up/down buttons + the More menu instead.
+  const displayName = channel.overrides.name ?? resolved?.name ?? ""
+
+  const checkbox = document.createElement("input")
+  checkbox.type = "checkbox"
+  checkbox.className = "size-4 shrink-0"
+  checkbox.checked = selectedChannelKeys.has(channel.key)
+  checkbox.setAttribute("aria-label", displayName || t("common.untitled"))
+  checkbox.addEventListener("mousedown", (event) => event.stopPropagation())
+  checkbox.addEventListener("click", (event) => {
+    event.stopPropagation()
+    handleChannelRowSelectClick(channel, event as MouseEvent)
+  })
+  row.appendChild(checkbox)
+  row.dataset.selected = checkbox.checked ? "true" : "false"
+
+  // Fine pointers get HTML5 DnD (below); coarse pointers get pointer-based long-press dragging instead.
   const isCoarsePointer = matchMedia("(pointer: coarse)").matches
   row.draggable = !isCoarsePointer
-  if (!isCoarsePointer) {
-    const grip = document.createElement("span")
-    grip.className = "text-fg-3 shrink-0 inline-flex cursor-grab"
-    grip.innerHTML = ICON_GRIP_VERTICAL
-    grip.setAttribute("aria-hidden", "true")
-    grip.title = t("editor.dragHandleLabel")
-    row.appendChild(grip)
-  }
+  const grip = document.createElement("span")
+  grip.className = "text-fg-3 shrink-0 inline-flex cursor-grab"
+  grip.innerHTML = ICON_GRIP_VERTICAL
+  grip.setAttribute("aria-hidden", "true")
+  grip.tabIndex = -1
+  grip.title = t("editor.dragHandleLabel")
+  row.appendChild(grip)
+  if (isCoarsePointer) attachTouchReorderHandlers(row, channel)
 
   const logoUrl = resolved?.logo || channel.overrides.logo
-  if (logoUrl) {
+  if (!isHeader && logoUrl) {
     const logo = document.createElement("div")
     logo.className =
       "h-8 w-8 shrink-0 rounded overflow-hidden ring-1 ring-inset ring-line bg-surface-2 flex items-center justify-center"
@@ -1376,15 +1961,18 @@ function buildChannelRow(
   }
 
   const nameWrap = document.createElement("div")
-  nameWrap.className = "flex flex-col min-w-0 flex-1 gap-0.5"
+  nameWrap.className = isHeader
+    ? "flex flex-col min-w-0 flex-1 gap-0.5 border-s-2 border-line ps-2"
+    : "flex flex-col min-w-0 flex-1 gap-0.5"
 
   const nameRow = document.createElement("div")
   nameRow.className = "flex items-center gap-1.5 min-w-0"
   nameRow.dataset.role = "name-row"
 
-  const displayName = channel.overrides.name ?? resolved?.name ?? ""
   const nameEl = document.createElement("span")
-  nameEl.className = "truncate text-sm font-medium"
+  nameEl.className = isHeader
+    ? "truncate text-2xs font-semibold uppercase tracking-wide text-fg-3"
+    : "truncate text-sm font-medium"
   nameEl.textContent = displayName || t("common.untitled")
   nameEl.dataset.role = "name-text"
   nameRow.appendChild(nameEl)
@@ -1434,13 +2022,29 @@ function buildChannelRow(
   moreBtn.addEventListener("click", () => openRowMenu(moreBtn, channel))
   row.appendChild(moreBtn)
 
+  row.addEventListener("contextmenu", (event) => {
+    if ((event.target as HTMLElement)?.closest("input, textarea")) return
+    event.preventDefault()
+    openRowMenu(moreBtn, channel)
+  })
+
   row.addEventListener("dragstart", (event) => {
-    row.dataset.dragging = "true"
-    event.dataTransfer?.setData("text/plain", channel.key)
+    if ((event.target as HTMLElement)?.closest("input[type=checkbox]")) {
+      event.preventDefault()
+      return
+    }
+    const draggedKeys = selectedChannelKeys.has(channel.key) ? [...selectedChannelKeys] : [channel.key]
+    for (const key of draggedKeys) {
+      const cached = channelRowCache.get(key)
+      if (cached) cached.refs.el.dataset.dragging = "true"
+    }
+    event.dataTransfer?.setData("text/plain", draggedKeys.length > 1 ? JSON.stringify(draggedKeys) : draggedKeys[0])
     if (event.dataTransfer) event.dataTransfer.effectAllowed = "move"
   })
   row.addEventListener("dragend", () => {
-    row.dataset.dragging = "false"
+    for (const cached of channelRowCache.values()) {
+      if (cached.refs.el.dataset.dragging === "true") cached.refs.el.dataset.dragging = "false"
+    }
   })
   row.addEventListener("dragover", (event) => {
     event.preventDefault()
@@ -1453,12 +2057,10 @@ function buildChannelRow(
     event.preventDefault()
     event.stopPropagation()
     row.dataset.dropTarget = "false"
-    const draggedKey = event.dataTransfer?.getData("text/plain")
-    if (!draggedKey || draggedKey === channel.key) return
-    applyDoc(moveChannel(doc, draggedKey, channel.key, channel.group))
+    applyChannelDrop(parseDraggedKeys(event.dataTransfer), channel.key, channel.group)
   })
 
-  return { el: row, upBtn, downBtn }
+  return { el: row, checkbox, upBtn, downBtn }
 }
 
 async function openEditDialog(channel: CustomChannel): Promise<void> {
@@ -1643,6 +2245,7 @@ function countBulkRenameMatches(findText: string, matchCase: boolean): number {
   const resolvedById = bulkResolvedById()
   let count = 0
   for (const channel of doc.channels) {
+    if (isHeaderChannel(channel)) continue
     if (textIncludes(effectiveChannelName(channel, resolvedById), findText, matchCase)) count++
   }
   return count
@@ -1657,6 +2260,7 @@ function applyBulkRename(
   let nextDoc = doc
   let count = 0
   for (const channel of doc.channels) {
+    if (isHeaderChannel(channel)) continue
     const currentName = effectiveChannelName(channel, resolvedById)
     if (!textIncludes(currentName, findText, matchCase)) continue
     const nextName = replaceAllText(currentName, findText, replaceText, matchCase)
@@ -1680,7 +2284,10 @@ function updateBulkRenamePreview(): void {
   if (bulkRenamePreviewSampleEl) {
     const resolvedById = bulkResolvedById()
     const firstMatch = findText
-      ? doc.channels.find((channel) => textIncludes(effectiveChannelName(channel, resolvedById), findText, matchCase))
+      ? doc.channels.find(
+          (channel) =>
+            !isHeaderChannel(channel) && textIncludes(effectiveChannelName(channel, resolvedById), findText, matchCase)
+        )
       : undefined
     bulkRenamePreviewSampleEl.replaceChildren()
     if (firstMatch) {
@@ -1880,14 +2487,21 @@ function wireKeyboardShortcuts(): void {
     const row = target?.closest<HTMLElement>(".editor-channel-row[data-key]")
     if (!row?.dataset.key) return
     const rowKey = row.dataset.key
+    const rowInSelection = selectedChannelKeys.size > 0 && selectedChannelKeys.has(rowKey)
     if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
       event.preventDefault()
-      applyDoc(moveChannelWithinGroup(doc, rowKey, event.key === "ArrowUp" ? "up" : "down"))
+      const direction = event.key === "ArrowUp" ? "up" : "down"
+      if (rowInSelection) applyDoc(moveChannelsWithinGroup(doc, [...selectedChannelKeys], direction))
+      else applyDoc(moveChannelWithinGroup(doc, rowKey, direction))
       return
     }
     if (event.key === "Delete" || event.key === "Backspace") {
       if (target?.tagName === "INPUT" || target?.isContentEditable) return
       event.preventDefault()
+      if (rowInSelection) {
+        removeSelectedChannelsWithUndo()
+        return
+      }
       const channel = doc.channels.find((item) => item.key === rowKey)
       if (!channel) return
       const resolved = findResolved(channel)
@@ -1974,9 +2588,15 @@ async function init(): Promise<void> {
   emptyAddUrlBtn?.addEventListener("click", () => addUrlBtn?.click())
   emptySourceBtn?.addEventListener("click", () => setActivePane("source"))
   groupsContainer?.addEventListener("scroll", closeMenu)
+  bulkMoveUpBtn?.addEventListener("click", () => applyDoc(moveChannelsWithinGroup(doc, [...selectedChannelKeys], "up")))
+  bulkMoveDownBtn?.addEventListener("click", () => applyDoc(moveChannelsWithinGroup(doc, [...selectedChannelKeys], "down")))
+  bulkMoveToGroupBtn?.addEventListener("click", () => openBulkMoveToGroupMenu(bulkMoveToGroupBtn))
+  bulkRemoveBtn?.addEventListener("click", () => removeSelectedChannelsWithUndo())
+  bulkClearBtn?.addEventListener("click", () => clearSelection())
 
   wirePaneSwitcher()
   wireKeyboardShortcuts()
+  wireSelectionEscape()
   wireNewGroupDialog()
   wireAddUrlDialog()
   wireBulkRenameDialog()

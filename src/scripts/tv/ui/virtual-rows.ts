@@ -48,6 +48,8 @@ export interface VirtualRowsOptions<T> {
   keyOf(item: T): string
   buildRow(item: T, index: number): HTMLElement
   onRowUnmount?(rowEl: HTMLElement): void
+  /** Rows this returns true for are never a focus target (e.g. non-interactive label rows). */
+  isSkippable?(item: T): boolean
 }
 
 export interface VirtualRowsHandle<T> {
@@ -141,7 +143,13 @@ export function createVirtualRows<T>(options: VirtualRowsOptions<T>): VirtualRow
     clearMountedRows()
     items = newItems
     resetKeepInView(options.scroller)
-    focusedIndex = items.length ? Math.max(0, Math.min(initialIndex, items.length - 1)) : 0
+    let index = items.length ? Math.max(0, Math.min(initialIndex, items.length - 1)) : 0
+    if (items.length && options.isSkippable) {
+      for (let attempt = 0; attempt < items.length && options.isSkippable(items[index]); attempt++) {
+        index = (index + 1) % items.length
+      }
+    }
+    focusedIndex = index
     lastFocusedIndex = items.length ? focusedIndex : null
     setTrackHeight()
     if (items.length) renderWindow()
@@ -149,7 +157,12 @@ export function createVirtualRows<T>(options: VirtualRowsOptions<T>): VirtualRow
 
   function focusIndex(index: number): void {
     if (!items.length) return
-    const clamped = Math.max(0, Math.min(items.length - 1, index))
+    let clamped = Math.max(0, Math.min(items.length - 1, index))
+    if (options.isSkippable) {
+      for (let attempt = 0; attempt < items.length && options.isSkippable(items[clamped]); attempt++) {
+        clamped = (clamped + 1) % items.length
+      }
+    }
     focusedIndex = clamped
     mountRow(clamped)
     renderWindow()
@@ -203,7 +216,13 @@ export function createVirtualRows<T>(options: VirtualRowsOptions<T>): VirtualRow
     const domIndex = currentFocusedIndex() ?? lastFocusedIndex
     if (domIndex == null || !items.length) return
     const projected = Math.max(0, Math.min(items.length - 1, domIndex + keyRepeat.pending()))
-    const next = nextRowIndex(projected, event.key as VirtualRowNavKey, items.length, visibleRowCount())
+    let next = nextRowIndex(projected, event.key as VirtualRowNavKey, items.length, visibleRowCount())
+    if (options.isSkippable) {
+      const skipDirection = event.key === "ArrowUp" || event.key === "PageUp" || event.key === "End" ? -1 : 1
+      while (next >= 0 && next < items.length && options.isSkippable(items[next])) next += skipDirection
+      next = Math.max(0, Math.min(items.length - 1, next))
+      if (options.isSkippable(items[next])) return
+    }
     if (next === projected) return
     event.preventDefault()
     event.stopPropagation()
