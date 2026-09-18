@@ -11,10 +11,11 @@ vi.mock("@/scripts/lib/creds.js", () => ({
   restoreState: (state: any) => restoredCredsState(state),
 }))
 
+const restorePrefs = vi.fn(async () => {})
 vi.mock("@/scripts/lib/preferences.js", () => ({
   ensureLoaded: async () => {},
   snapshotPrefs: () => ({}),
-  restorePrefs: async () => {},
+  restorePrefs: (prefs: any) => restorePrefs(prefs),
 }))
 
 let settingsState: any = {
@@ -184,7 +185,7 @@ vi.mock("@/scripts/lib/tv-cast.js", () => ({
   },
 }))
 
-import { exportAll, importAll } from "@/scripts/lib/backup.js"
+import { exportAll, importAll, BACKUP_SECTIONS } from "@/scripts/lib/backup.js"
 
 const customDoc = JSON.stringify({
   version: 1,
@@ -215,6 +216,7 @@ const sampleTvDevice = {
 beforeEach(() => {
   localContentStore.clear()
   restoredCredsState.mockClear()
+  restorePrefs.mockClear()
   setLocale.mockClear()
   epgOffsets.clear()
   tvDevices = []
@@ -276,8 +278,16 @@ describe("exportAll", () => {
     const snapshot = (await exportAll()) as BackupSnapshot
 
     expect(Object.keys(snapshot.localContent).sort()).toEqual(["cust-1", "loc-1"])
-    expect(snapshot.localContent["cust-1"]).toBe(customDoc)
+    expect(snapshot.localContent["cust-1"]).toEqual(JSON.parse(customDoc))
     expect(snapshot.localContent["loc-1"]).toBe("#EXTM3U\n")
+  })
+
+  it("keeps the raw string when a custom-playlist doc isn't valid JSON", async () => {
+    localContentStore.set("cust-1", "not json")
+
+    const snapshot = (await exportAll()) as BackupSnapshot
+
+    expect(snapshot.localContent["cust-1"]).toBe("not json")
   })
 
   it("skips entry types that have no stored content", async () => {
@@ -598,5 +608,79 @@ describe("importAll", () => {
     })
 
     expect(tvDevices).toEqual([])
+  })
+
+  it("stores a stringified object localContent value and a string value verbatim", async () => {
+    const doc = { version: 1, nextId: 1, groups: [], channels: [] }
+    await importAll({
+      format: "extreme-infinitv-backup",
+      version: 1,
+      creds: { entries: [], selectedId: "" },
+      prefs: {},
+      localContent: { "cust-1": doc, "loc-1": "#EXTM3U\n" },
+    })
+
+    expect(localContentStore.get("cust-1")).toBe(JSON.stringify(doc))
+    expect(localContentStore.get("loc-1")).toBe("#EXTM3U\n")
+  })
+
+  it("with sections: ['prefs'] skips creds and app settings but restores prefs", async () => {
+    await importAll(
+      {
+        format: "extreme-infinitv-backup",
+        version: 1,
+        creds: { entries: [{ _id: "src-1", type: "xtream" }], selectedId: "src-1" },
+        prefs: { "src-1": {} },
+        appSettings: { userAgent: "custom-ua" },
+      },
+      { sections: ["prefs"] }
+    )
+
+    expect(restoredCredsState).not.toHaveBeenCalled()
+    expect(settingsState.userAgent).toBe("")
+    expect(restorePrefs).toHaveBeenCalledWith({ "src-1": {} })
+  })
+
+  it("with creds skipped still applies epgOffsets for entries present in current creds state", async () => {
+    await importAll(
+      {
+        format: "extreme-infinitv-backup",
+        version: 1,
+        creds: { entries: [{ _id: "other-id", type: "xtream" }], selectedId: "other-id" },
+        prefs: {},
+        epgOffsets: { "src-1": 45, "other-id": 60 },
+      },
+      { sections: ["epgOffsets"] }
+    )
+
+    expect(epgOffsets.get("src-1")).toBe(45)
+    expect(epgOffsets.has("other-id")).toBe(false)
+  })
+
+  it("summary includes the applied sections", async () => {
+    const summary = await importAll(
+      {
+        format: "extreme-infinitv-backup",
+        version: 1,
+        creds: { entries: [], selectedId: "" },
+        prefs: {},
+      },
+      { sections: ["prefs", "epgOffsets"] }
+    )
+
+    expect(summary.sections).toEqual(["epgOffsets", "prefs"])
+  })
+})
+
+describe("BACKUP_SECTIONS", () => {
+  it("lists the six known section names in order", () => {
+    expect(BACKUP_SECTIONS).toEqual([
+      "creds",
+      "localContent",
+      "epgOffsets",
+      "prefs",
+      "tvDevices",
+      "appSettings",
+    ])
   })
 })

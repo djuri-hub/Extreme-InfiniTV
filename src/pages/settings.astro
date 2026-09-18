@@ -2463,40 +2463,6 @@ const navStructure: NavSection[] = [
     </div>
   </dialog>
 
-  <!-- Import confirmation dialog -->
-  <dialog
-    id="settings-import-dialog"
-    aria-labelledby="settings-import-title"
-    aria-describedby="settings-import-desc"
-    class="fixed inset-0 m-auto rounded-2xl border border-line bg-surface text-fg p-0
-           w-[min(28rem,calc(100vw-2rem))] backdrop:bg-black/60">
-    <div class="icon-mark-host flex flex-col p-5 gap-4">
-      <div class="flex items-start gap-3">
-        <span class="icon-mark icon-mark--bad icon-mark--lg">
-          <IconAlertTriangle aria-hidden="true" stroke={2} />
-        </span>
-        <div class="flex flex-col gap-1 min-w-0 pt-0.5">
-          <h2 id="settings-import-title" class="text-base font-semibold">
-            Replace everything with this backup?
-          </h2>
-          <p id="settings-import-desc" class="text-sm text-fg-2">
-            Import will replace all playlists, favorites, recents, watched
-            progress, hidden categories, and app settings on this device.
-          </p>
-        </div>
-      </div>
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-        <button id="settings-import-cancel" type="button" class="btn justify-start sm:justify-center">
-          <span data-i18n="common.cancel">Cancel</span>
-        </button>
-        <button id="settings-import-confirm" type="button" class="btn-danger justify-start sm:justify-center">
-          <IconUpload aria-hidden="true" class="btn-icon" />
-          <span>Continue</span>
-        </button>
-      </div>
-    </div>
-  </dialog>
-
   <script>
     import { Store } from "@tauri-apps/plugin-store"
     import { log } from "@/scripts/lib/log.js"
@@ -2633,6 +2599,7 @@ const navStructure: NavSection[] = [
     import { validateTmdbKey } from "@/scripts/lib/tmdb.ts"
     import { bindExternalLinks } from "@/scripts/lib/external-link.js"
     import { bindBackupRestore } from "@/scripts/lib/restore-backup.js"
+    import { pickBackupSections } from "@/scripts/lib/backup-sections-dialog.js"
     import {
       saveBackupSnapshot,
       loadBackupSnapshot,
@@ -3339,60 +3306,9 @@ const navStructure: NavSection[] = [
       }
     })
 
-    const importDialog = /** @type {HTMLDialogElement|null} */ (
-      document.getElementById("settings-import-dialog")
-    )
-    const importConfirmBtn = document.getElementById("settings-import-confirm")
-    const importCancelBtn = document.getElementById("settings-import-cancel")
-    if (importDialog)
-      attachDialogSpatialNav(importDialog, { defaultElement: "#settings-import-cancel" })
-
-    function askImportConfirm() {
-      return new Promise((resolve) => {
-        if (!importDialog) {
-          resolve(false)
-          return
-        }
-        const cleanup = () => {
-          importConfirmBtn?.removeEventListener("click", onYes)
-          importCancelBtn?.removeEventListener("click", onNo)
-          importDialog.removeEventListener("close", onClose)
-          importDialog.removeEventListener("click", onBackdrop)
-        }
-        const onYes = () => {
-          cleanup()
-          importDialog.close?.()
-          resolve(true)
-        }
-        const onNo = () => {
-          cleanup()
-          importDialog.close?.()
-          resolve(false)
-        }
-        const onClose = () => {
-          cleanup()
-          resolve(false)
-        }
-        const onBackdrop = (event) => {
-          if (event.target === importDialog) onNo()
-        }
-        importConfirmBtn?.addEventListener("click", onYes)
-        importCancelBtn?.addEventListener("click", onNo)
-        importDialog.addEventListener("close", onClose)
-        importDialog.addEventListener("click", onBackdrop)
-        if (typeof importDialog.showModal === "function") importDialog.showModal()
-        else importDialog.setAttribute("open", "")
-        requestAnimationFrame(() => {
-          window.SpatialNavigation?.makeFocusable?.()
-          importCancelBtn?.focus?.()
-        })
-      })
-    }
-
     bindBackupRestore(importBtn, {
       fileInput: importInput,
       logTag: "settings:import",
-      confirm: askImportConfirm,
       successDuration: 6000,
       onRestored: async () => {
         flashMsg(backupMsgEl, "Imported.")
@@ -3480,7 +3396,6 @@ const navStructure: NavSection[] = [
     refreshRestoreLastVisibility()
 
     restoreLastBtn?.addEventListener("click", async () => {
-      if (!(await askImportConfirm())) return
       setLoading(restoreLastBtn, true)
       try {
         const text = await loadBackupSnapshot()
@@ -3498,8 +3413,13 @@ const navStructure: NavSection[] = [
           toastError(t("settings.toast.backupParseFail"), { description: "Not valid JSON." })
           return
         }
-        const { importAll } = await import("@/scripts/lib/backup.js")
-        const summary = await importAll(parsed)
+        const { BACKUP_SECTIONS, importAll } = await import("@/scripts/lib/backup.js")
+        const present = BACKUP_SECTIONS.filter(
+          (name) => parsed && typeof parsed === "object" && name in parsed
+        )
+        const sections = await pickBackupSections(present)
+        if (!sections) return
+        const summary = await importAll(parsed, { sections })
         toastSuccess(t("settings.toast.backupRestored"), {
           description: `${summary.playlists} playlist(s), ${summary.prefsPlaylists} preference set(s).`,
           duration: 6000,
