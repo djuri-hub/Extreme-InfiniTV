@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { computeMpvSurface, type MpvSurfaceNativeState } from "../src/scripts/lib/mpv-embedded-surface"
+import { computeMpvSurface, shouldSeedSurfaceState, type MpvSurfaceNativeState } from "../src/scripts/lib/mpv-embedded-surface"
 
 const NATIVE_STATES: MpvSurfaceNativeState[] = ["hidden", "embedded", "fullscreen", "pip"]
 
@@ -77,6 +77,28 @@ describe("computeMpvSurface", () => {
       expect(() =>
         computeMpvSurface({ nativeState, revealed: false, pageBounds: false, loading: false }),
       ).not.toThrow()
+    }
+  })
+})
+
+describe("shouldSeedSurfaceState", () => {
+  it("returns the reported state when the session id matches", () => {
+    expect(shouldSeedSurfaceState({ sessionId: "abc", surface: "embedded" }, "abc")).toBe("embedded")
+  })
+
+  it("returns null when the session id does not match", () => {
+    expect(shouldSeedSurfaceState({ sessionId: "abc", surface: "embedded" }, "xyz")).toBeNull()
+  })
+
+  it("returns null for a missing or malformed status", () => {
+    expect(shouldSeedSurfaceState(null, "abc")).toBeNull()
+    expect(shouldSeedSurfaceState(undefined, "abc")).toBeNull()
+    expect(shouldSeedSurfaceState({ sessionId: "abc", surface: "bogus" }, "abc")).toBeNull()
+  })
+
+  it("accepts every valid native state name", () => {
+    for (const nativeState of NATIVE_STATES) {
+      expect(shouldSeedSurfaceState({ sessionId: "abc", surface: nativeState }, "abc")).toBe(nativeState)
     }
   })
 })

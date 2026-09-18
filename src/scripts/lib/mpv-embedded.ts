@@ -15,8 +15,12 @@ import {
   mpvNumericId,
   mpvTrackCandidates,
 } from "@/scripts/lib/mpv-tracks.js"
-import { computeMpvSurface } from "@/scripts/lib/mpv-embedded-surface.js"
-import type { MpvSurfaceNativeState, MpvSurfacePlaceholder } from "@/scripts/lib/mpv-embedded-surface.js"
+import { computeMpvSurface, shouldSeedSurfaceState } from "@/scripts/lib/mpv-embedded-surface.js"
+import type {
+  MpvSurfaceNativeState,
+  MpvSurfacePlaceholder,
+  MpvEmbedStatusSurface,
+} from "@/scripts/lib/mpv-embedded-surface.js"
 import type { VjsLikeHandle, PlaybackCodecInfo } from "@/scripts/lib/player-runtime.js"
 import type { EngineEvent, EngineStats } from "@/scripts/lib/player-telemetry.js"
 import { chooseAudioTrackId, chooseSubtitleTrackId, rememberAudioTrack, rememberSubtitleTrack } from "@/scripts/lib/track-memory.js"
@@ -998,6 +1002,15 @@ export async function createMpvEmbeddedHandle(
   const unlistenSurface = await listen<MpvSurfaceEventPayload>("xt:mpv-surface", (event) => {
     if (event.payload) handleMpvSurface(event.payload)
   })
+
+  try {
+    const status = (await invoke("mpv_embed_status")) as MpvEmbedStatusSurface
+    const seededState = shouldSeedSurfaceState(status, sessionId)
+    // The first surface report can fire before this listener exists.
+    if (seededState) handleMpvSurface({ sessionId, state: seededState, bounds: null, pip: null })
+  } catch (err) {
+    log.warn("[xt:mpv-embed] mpv_embed_status seed failed:", err)
+  }
 
   // See native-video-hole-contract.md: the webview must cut a transparent hole for the video below it.
   // Owner stamp: a stale handle's dispose() can't clear a hole it no longer owns.

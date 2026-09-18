@@ -440,7 +440,10 @@ fn surface_change_set(previous: &Option<SurfaceSnapshot>, current: &SurfaceSnaps
             || previous.surface_hwnd != current.surface_hwnd,
         pointer_mode: matches!(previous.state, SurfaceState::Pip) != matches!(current.state, SurfaceState::Pip),
         placement: previous.placement != current.placement,
-        surface_event: previous.state != current.state || previous.pip != current.pip,
+        // A rediscovered window re-announces state for a late listener.
+        surface_event: previous.state != current.state
+            || previous.pip != current.pip
+            || previous.surface_hwnd != current.surface_hwnd,
     }
 }
 
