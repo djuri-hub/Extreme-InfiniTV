@@ -417,6 +417,13 @@ export async function getActiveEntry() {
   return active
 }
 
+/** Any stored entry by id, active or not. */
+export async function getEntryById(entryId) {
+  if (!entryId) return null
+  const s = await getState()
+  return s.entries.find((entry) => entry._id === entryId) || null
+}
+
 export async function addEntry(partial) {
   const s = await getState()
   const entry = {

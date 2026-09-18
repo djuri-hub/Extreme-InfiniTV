@@ -13,15 +13,25 @@ vi.mock("@/scripts/lib/app-settings.js", () => ({
 let activeEntry: Record<string, unknown> | null = null
 const candidates: Array<{ host: string; port: string; user: string; pass: string }> = []
 let mirrorPin = 0
-const setMirrorPin = vi.fn((_entryId: string, index: number) => {
-  mirrorPin = index
+// Separate entries a caller can target by entryId (e.g. a custom channel's source),
+// distinct from the active entry above.
+let otherEntries: Record<string, unknown>[] = []
+const otherCandidates = new Map<string, Array<{ host: string; port: string; user: string; pass: string }>>()
+const otherMirrorPins = new Map<string, number>()
+const setMirrorPin = vi.fn((entryId: string, index: number) => {
+  if (activeEntry && entryId === activeEntry._id) mirrorPin = index
+  else otherMirrorPins.set(entryId, index)
 })
 vi.mock("@/scripts/lib/creds.js", () => ({
   getActiveEntry: async () => activeEntry,
-  getEntries: async () => (activeEntry ? [activeEntry] : []),
+  getEntries: async () => [...(activeEntry ? [activeEntry] : []), ...otherEntries],
+  getEntryById: async (entryId: string) =>
+    [...(activeEntry ? [activeEntry] : []), ...otherEntries].find((entry) => entry._id === entryId) || null,
   buildApiUrl: () => "http://primary.example/player_api.php",
-  xtreamCandidatesFor: () => candidates,
-  getMirrorPin: () => mirrorPin,
+  xtreamCandidatesFor: (entry: any) =>
+    activeEntry && entry?._id === activeEntry._id ? candidates : otherCandidates.get(entry?._id) || [],
+  getMirrorPin: (entryId: string) =>
+    activeEntry && entryId === activeEntry._id ? mirrorPin : otherMirrorPins.get(entryId) || 0,
   setMirrorPin: (entryId: string, index: number) => setMirrorPin(entryId, index),
 }))
 
@@ -42,6 +52,9 @@ describe("advanceMirror", () => {
       { host: "http://primary.example", port: "", user: "user", pass: "pass" },
       { host: "http://backup.example", port: "", user: "user", pass: "pass" }
     )
+    otherEntries = []
+    otherCandidates.clear()
+    otherMirrorPins.clear()
     document.dispatchEvent(new Event("xt:entries-updated"))
   })
 
@@ -100,5 +113,43 @@ describe("advanceMirror", () => {
     providerFetch.mockResolvedValueOnce(probeResponse(458)).mockResolvedValueOnce(probeResponse(200))
     const url = await advanceMirror((creds) => `${creds.host}/live/x.m3u8`)
     expect(url).toBe("http://backup.example/live/x.m3u8")
+  })
+
+  it("with entryId, resolves candidates from that entry while the active entry is a custom one", async () => {
+    activeEntry = { _id: "custom-1", type: "custom" }
+    otherEntries = [{ _id: "source-1", type: "xtream" }]
+    otherCandidates.set("source-1", [
+      { host: "http://source-primary.example", port: "", user: "user", pass: "pass" },
+      { host: "http://source-backup.example", port: "", user: "user", pass: "pass" },
+    ])
+    providerFetch.mockResolvedValue(probeResponse(200))
+    const url = await advanceMirror((creds) => `${creds.host}/live/x.m3u8`, { entryId: "source-1" })
+    expect(url).toBe("http://source-backup.example/live/x.m3u8")
+  })
+
+  it("with entryId, pins the hop under the source entry id, not the active entry", async () => {
+    activeEntry = { _id: "custom-1", type: "custom" }
+    otherEntries = [{ _id: "source-1", type: "xtream" }]
+    otherCandidates.set("source-1", [
+      { host: "http://source-primary.example", port: "", user: "user", pass: "pass" },
+      { host: "http://source-backup.example", port: "", user: "user", pass: "pass" },
+    ])
+    providerFetch.mockResolvedValue(probeResponse(200))
+    await advanceMirror((creds) => `${creds.host}/live/x.m3u8`, { entryId: "source-1" })
+    expect(setMirrorPin).toHaveBeenCalledWith("source-1", 1)
+    expect(otherMirrorPins.get("source-1")).toBe(1)
+  })
+
+  it("resolveStreamUrl with entryId resolves candidates from that entry while the active entry is a custom one", async () => {
+    activeEntry = { _id: "custom-1", type: "custom" }
+    otherEntries = [{ _id: "source-1", type: "xtream" }]
+    otherCandidates.set("source-1", [
+      { host: "http://source-primary.example", port: "", user: "user", pass: "pass" },
+      { host: "http://source-backup.example", port: "", user: "user", pass: "pass" },
+    ])
+    providerFetch.mockResolvedValueOnce(probeResponse(458)).mockResolvedValueOnce(probeResponse(200))
+    const url = await resolveStreamUrl((creds) => `${creds.host}/live/y.m3u8`, { entryId: "source-1" })
+    expect(url).toBe("http://source-backup.example/live/y.m3u8")
+    expect(otherMirrorPins.get("source-1")).toBe(1)
   })
 })

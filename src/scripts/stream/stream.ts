@@ -2401,9 +2401,11 @@ function tryMirrorHopOnLiveError(ctx, rejection) {
   ctx.mirrorHopPromise = (async () => {
     const seqAtRejection = ctx.seq
     const repin = shouldRepinMirror(rejection)
+    // A custom-playlist channel's ctx.streamId is the doc id, not the source's stream id.
+    const targetStreamId = ctx.mirrorStreamId ?? ctx.streamId
     const nextUrl = await advanceMirror(
-      (candidate) => buildDirectLiveUrl(ctx.streamId, candidate),
-      { hopsUsed: ctx.mirrorHops ?? 0, repin }
+      (candidate) => buildDirectLiveUrl(targetStreamId, candidate),
+      { hopsUsed: ctx.mirrorHops ?? 0, repin, entryId: ctx.mirrorEntryId || undefined }
     )
     // A cast/external handoff doesn't bump playSeq, so re-check both right before the remount.
     if (seqAtRejection !== playSeq || isCastRoutingActive() || externalPlaybackActive) return
@@ -4350,8 +4352,14 @@ async function launchNativeLiveSession(initialStreamId, initialName) {
   if (!all.length) return false
   ensureNativeLiveSubscription()
 
+  const initialChannel = all.find((c) => c.id === initialStreamId)
   let initialUrl
-  if (hasDirectUrl(initialStreamId)) {
+  if (initialChannel?.sourceEntryId && initialChannel?.sourceStreamId != null) {
+    initialUrl = await resolveStreamUrl(
+      (candidate) => buildDirectLiveUrl(initialChannel.sourceStreamId, candidate),
+      { entryId: initialChannel.sourceEntryId }
+    )
+  } else if (hasDirectUrl(initialStreamId)) {
     initialUrl = getDirectUrl(initialStreamId)
   } else {
     initialUrl = await resolveStreamUrl((candidate) =>
@@ -4537,7 +4545,14 @@ async function play(streamId, name, reason = "user") {
     return
   }
 
-  const src = hasDirectUrl(streamId)
+  const channel = all.find((c) => c.id === streamId)
+  // Custom channel: cached direct URL is stale after a mirror hop, re-resolve.
+  const src = channel?.sourceEntryId && channel?.sourceStreamId != null
+    ? await resolveStreamUrl(
+        (candidate) => buildDirectLiveUrl(channel.sourceStreamId, candidate),
+        { entryId: channel.sourceEntryId }
+      )
+    : hasDirectUrl(streamId)
     ? getDirectUrl(streamId)
     : await resolveStreamUrl((c) => buildDirectLiveUrl(streamId, c))
 
@@ -4586,7 +4601,6 @@ async function play(streamId, name, reason = "user") {
     pushRecent(activePlaylistId, "live", streamId, name, ch?.logo || null)
   }
 
-  const channel = all.find((c) => c.id === streamId)
   const channelLogo = channel?.logo ? safeHttpUrl(channel.logo) : null
 
   const sourceLogo = viewport?.querySelector(
@@ -4780,6 +4794,8 @@ async function play(streamId, name, reason = "user") {
     audioProxied,
     audioProxySessionId,
     mirrorHops: 0,
+    mirrorEntryId: channel?.sourceEntryId ?? null,
+    mirrorStreamId: channel?.sourceStreamId ?? null,
     drm: audioProxied ? null : channelDrm,
     startedAtMs: tuneStartedAtMs,
   }
@@ -5143,6 +5159,8 @@ async function playCatchup(channel, opts) {
     audioClockWedge: false,
     mime,
     isLive: false,
+    mirrorEntryId: null,
+    mirrorStreamId: null,
     startedAtMs: catchupTuneStartedAtMs,
   }
   getPlayerInsights().startSession({ label: channel.name, seq })

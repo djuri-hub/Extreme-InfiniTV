@@ -13,6 +13,7 @@
 import {
   getActiveEntry,
   getEntries,
+  getEntryById,
   buildApiUrl,
   xtreamCandidatesFor,
   getMirrorPin,
@@ -209,16 +210,17 @@ async function probeCandidateRing(candidates, buildUrl, startIndex, startOffset)
  * whole retry window.
  *
  * @param {(creds: {host:string,port:string,user:string,pass:string}) => string} buildUrl
- * @param {{hopsUsed?: number, repin?: boolean}} [options] - `hopsUsed` caps the hop at one per
+ * @param {{hopsUsed?: number, repin?: boolean, entryId?: string}} [options] - `hopsUsed` caps the hop at one per
  *   configured candidate. `repin` (default true) persists the hop for the rest of the session;
  *   pass false for a rejection scoped to a single channel (e.g. one that only exists on the
  *   mirror's package) so the rest of the session keeps using the primary.
+ *   `entryId` targets a specific playlist entry (e.g. a custom channel's source) instead of the active one.
  * @returns {Promise<string|null>} The next reachable candidate's URL, or null
  *   when the entry has fewer than 2 candidates, the hop budget is spent, or
  *   none of the others are reachable.
  */
-export async function advanceMirror(buildUrl, { hopsUsed = 0, repin = true } = {}) {
-  const entry = await getActiveEntry()
+export async function advanceMirror(buildUrl, { hopsUsed = 0, repin = true, entryId } = {}) {
+  const entry = entryId ? await getEntryById(entryId) : await getActiveEntry()
   const candidates = xtreamCandidatesFor(entry)
   if (!entry || candidates.length < 2) return null
   if (hopsUsed >= candidates.length - 1) return null
@@ -254,10 +256,11 @@ export async function advanceMirror(buildUrl, { hopsUsed = 0, repin = true } = {
  * the player surfaces the actual error to the user.
  *
  * @param {(creds: {host:string,port:string,user:string,pass:string}) => string} buildUrl
+ * @param {{entryId?: string}} [options] - `entryId` targets a specific playlist entry instead of the active one.
  * @returns {Promise<string>}
  */
-export async function resolveStreamUrl(buildUrl) {
-  const entry = await getActiveEntry()
+export async function resolveStreamUrl(buildUrl, { entryId } = {}) {
+  const entry = entryId ? await getEntryById(entryId) : await getActiveEntry()
   const candidates = xtreamCandidatesFor(entry)
   if (!entry || candidates.length < 2) {
     return buildUrl(candidates[0] || { host: "", port: "", user: "", pass: "" })

@@ -204,10 +204,20 @@ export async function buildCustomSourcePools(doc, opts = {}) {
   return pools
 }
 
+/** Adds sourceEntryId/sourceStreamId to xtream custom channels for mirror failover. */
+export function stampCustomSourceIdentity(resolvedChannels, doc) {
+  const docChannelsById = new Map((doc?.channels || []).map((channel) => [channel.id, channel]))
+  return resolvedChannels.map((channel) => {
+    const source = docChannelsById.get(channel.id)?.sources?.[0]
+    if (source?.kind !== "xtream") return channel
+    return { ...channel, sourceEntryId: source.entryId, sourceStreamId: source.streamId }
+  })
+}
+
 async function fetchCustomLiveChannels(playlistId, opts = {}) {
   const doc = await loadCustomDoc(playlistId)
   const pools = await buildCustomSourcePools(doc, opts)
-  return resolveCustomChannels(doc, pools)
+  return stampCustomSourceIdentity(resolveCustomChannels(doc, pools), doc)
 }
 
 export async function ensureLive(creds, playlistId, opts = {}) {
