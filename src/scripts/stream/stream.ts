@@ -2320,6 +2320,10 @@ const ensureEmbeddedPlayer = async (backend, opts = {}) => {
 
 /** Re-srcs the current mount from ctx; shared by the same-src retry, the mirror hop, and the stall retune. */
 function remountFromContext(ctx) {
+  if (ctx.rejectionRetryTimer) {
+    clearTimeout(ctx.rejectionRetryTimer)
+    ctx.rejectionRetryTimer = null
+  }
   try {
     vjs.reset?.()
     vjs.src({
@@ -2337,15 +2341,18 @@ function remountFromContext(ctx) {
 }
 
 /** Same-src retry (or give-up) path; transient rejections get a backoff budget first. */
-function scheduleSameSrcRetry(ctx) {
-  const errorDetail = vjs?.codecInfo?.()?.errorDetail ?? null
-  if (ctx.isLive && !ctx.audioProxied && isTransientRejection({ errorDetail })) {
+function scheduleSameSrcRetry(ctx, rejection = null) {
+  const errorDetail = rejection?.errorDetail ?? vjs?.codecInfo?.()?.errorDetail ?? null
+  if (ctx.isLive && !ctx.audioProxied && isTransientRejection(rejection ?? { errorDetail })) {
     const attempt = ctx.rejectionRetries ?? 0
     if (attempt < REJECTION_RETRY_DELAYS_MS.length) {
+      // shaka/mpv can fire more than one error per rejection.
+      if (ctx.rejectionRetryTimer) return
       ctx.rejectionRetries = attempt + 1
       const seqAtRetry = ctx.seq
       toast({ title: t("stream.error.providerBusyRetrying"), duration: REJECTION_RETRY_DELAYS_MS[attempt] })
-      setTimeout(() => {
+      ctx.rejectionRetryTimer = setTimeout(() => {
+        ctx.rejectionRetryTimer = null
         if (seqAtRetry !== playSeq) return
         if (isCastRoutingActive() || externalPlaybackActive) return
         remountFromContext(ctx)
@@ -2401,7 +2408,7 @@ function tryMirrorHopOnLiveError(ctx, rejection) {
     // A cast/external handoff doesn't bump playSeq, so re-check both right before the remount.
     if (seqAtRejection !== playSeq || isCastRoutingActive() || externalPlaybackActive) return
     if (!nextUrl) {
-      scheduleSameSrcRetry(ctx)
+      scheduleSameSrcRetry(ctx, rejection)
       return
     }
     ctx.mirrorHops = (ctx.mirrorHops ?? 0) + 1
@@ -2588,6 +2595,10 @@ async function mountEmbeddedPlayer(backend, opts) {
       if (lastPlayContext.audioProxied) {
         rememberAudioTranscodeChannel(activePlaylistId, String(lastPlayContext.streamId))
       }
+      if (lastPlayContext.rejectionRetryTimer) {
+        clearTimeout(lastPlayContext.rejectionRetryTimer)
+        lastPlayContext.rejectionRetryTimer = null
+      }
     }
     if (catchupRetryResetTimer) clearTimeout(catchupRetryResetTimer)
     const streamIdAtPlaying = lastPlayContext?.streamId
@@ -2596,6 +2607,10 @@ async function mountEmbeddedPlayer(backend, opts) {
       catchupSeekRemountCount = 0
       if (streamIdAtPlaying != null) audioProxyStallRetuneCounts.delete(streamIdAtPlaying)
       if (streamIdAtPlaying != null) liveStallRetuneCounts.delete(streamIdAtPlaying)
+      if (lastPlayContext?.streamId === streamIdAtPlaying) {
+        lastPlayContext.rejectionRetries = 0
+        lastPlayContext.retried = false
+      }
     }, CATCHUP_RETRY_RESET_AFTER_MS)
     hideTuningOverlay()
     hideBufferingChip()
@@ -2706,7 +2721,7 @@ async function mountEmbeddedPlayer(backend, opts) {
       void tryMirrorHopOnLiveError(ctx, { errorDetail, httpStatus })
       return
     }
-    scheduleSameSrcRetry(ctx)
+    scheduleSameSrcRetry(ctx, { errorDetail, httpStatus })
   })
 
   return vjs
@@ -4756,6 +4771,7 @@ async function play(streamId, name, reason = "user") {
     seq,
     retried: false,
     rejectionRetries: 0,
+    rejectionRetryTimer: null,
     started: false,
     nativeFallbackTried: false,
     audioClockWedge: false,
@@ -5120,6 +5136,7 @@ async function playCatchup(channel, opts) {
     seq,
     retried: false,
     rejectionRetries: 0,
+    rejectionRetryTimer: null,
     started: false,
     // Skip the Android native-handoff escape hatch for catch-up sessions.
     nativeFallbackTried: true,
