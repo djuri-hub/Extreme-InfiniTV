@@ -948,6 +948,7 @@
   "stream.error.cantPlayTitle": "Dieser Sender kann nicht abgespielt werden",
   "stream.error.cantPlay": "{channel} konnte nicht abgespielt werden",
   "stream.error.retrying": "Erneut versuchen…",
+  "stream.error.providerBusyRetrying": "Anbieter ist ausgelastet - erneut versuchen…",
   "stream.error.checkConnection": "Prüfe deine Verbindung oder versuche einen anderen Sender.",
   "stream.error.hevcHint": "Dieser Sender nutzt HEVC (H.265), das der integrierte Player auf diesem Gerät eventuell nicht unterstützt. Versuche, ihn in einem externen Player zu öffnen.",
   "stream.error.schemeUnsupported": "\"{scheme}://\"-Streams können nicht im eingebetteten Player wiedergegeben werden. Richte MPV oder VLC in Einstellungen → Wiedergabe ein.",

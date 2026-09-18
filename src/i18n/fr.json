@@ -948,6 +948,7 @@
   "stream.error.cantPlayTitle": "Impossible de lire cette chaîne",
   "stream.error.cantPlay": "Impossible de lire {channel}",
   "stream.error.retrying": "Nouvelle tentative…",
+  "stream.error.providerBusyRetrying": "Le fournisseur est occupé - nouvelle tentative…",
   "stream.error.checkConnection": "Vérifiez votre connexion ou essayez une autre chaîne.",
   "stream.error.hevcHint": "Cette chaîne utilise le HEVC (H.265), que le lecteur intégré ne prend peut-être pas en charge sur cet appareil. Essayez de l'ouvrir dans un lecteur externe.",
   "stream.error.schemeUnsupported": "Impossible de lire les flux \"{scheme}://\" dans le lecteur intégré. Configurez MPV ou VLC dans Paramètres → Lecture.",

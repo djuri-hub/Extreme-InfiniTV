@@ -4,6 +4,7 @@ import {
   parseHttpStatusFromDetail,
   isProviderRejection,
   shouldRepinMirror,
+  isTransientRejection,
 } from "../src/scripts/lib/stream-reject"
 
 describe("REJECTION_STATUSES", () => {
@@ -32,6 +33,10 @@ describe("parseHttpStatusFromDetail", () => {
     expect(
       parseHttpStatusFromDetail('shaka:network:1001 ["http://host/live/u/p/1.m3u8",458,"",{},1]')
     ).toBe(458)
+  })
+
+  it("reads the status off an mpv-embedded HTTP_STATUS prefix", () => {
+    expect(parseHttpStatusFromDetail("HTTP_STATUS:458:loading failed")).toBe(458)
   })
 
   it("returns null when no status is present", () => {
@@ -87,5 +92,22 @@ describe("shouldRepinMirror", () => {
   it("is false when no status is present", () => {
     expect(shouldRepinMirror({})).toBe(false)
     expect(shouldRepinMirror({ errorDetail: "bufferStalledError" })).toBe(false)
+  })
+})
+
+describe("isTransientRejection", () => {
+  it("is true for 407 and the connection-limit statuses", () => {
+    expect(isTransientRejection({ httpStatus: 407 })).toBe(true)
+    expect(isTransientRejection({ httpStatus: 429 })).toBe(true)
+    expect(isTransientRejection({ httpStatus: 458 })).toBe(true)
+    expect(isTransientRejection({ httpStatus: 509 })).toBe(true)
+  })
+
+  it("is false for non-transient statuses and no status", () => {
+    expect(isTransientRejection({ httpStatus: 401 })).toBe(false)
+    expect(isTransientRejection({ httpStatus: 403 })).toBe(false)
+    expect(isTransientRejection({ httpStatus: 404 })).toBe(false)
+    expect(isTransientRejection({ httpStatus: 500 })).toBe(false)
+    expect(isTransientRejection({})).toBe(false)
   })
 })

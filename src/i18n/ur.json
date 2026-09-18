@@ -948,6 +948,7 @@
   "stream.error.cantPlayTitle": "یہ چینل نہیں چل سکتا",
   "stream.error.cantPlay": "{channel} نہیں چل سکا",
   "stream.error.retrying": "دوبارہ کوشش کی جا رہی ہے…",
+  "stream.error.providerBusyRetrying": "مہیا کنندہ مصروف ہے - دوبارہ کوشش کی جا رہی ہے…",
   "stream.error.checkConnection": "اپنا کنکشن چیک کریں یا کوئی اور چینل آزمائیں۔",
   "stream.error.hevcHint": "یہ چینل HEVC (H.265) استعمال کرتا ہے جو اس ڈیوائس پر بلٹ اِن پلیئر سپورٹ نہیں کر سکتا۔ اسے بیرونی پلیئر میں کھولنے کی کوشش کریں۔",
   "stream.error.schemeUnsupported": "\"{scheme}://\" اسٹریمز ایمبیڈڈ پلیئر میں نہیں چل سکتیں۔ ترتیبات → پلے بیک میں MPV یا VLC سیٹ اپ کریں۔",

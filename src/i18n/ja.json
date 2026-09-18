@@ -948,6 +948,7 @@
   "stream.error.cantPlayTitle": "このチャンネルを再生できません",
   "stream.error.cantPlay": "{channel} を再生できませんでした",
   "stream.error.retrying": "再試行中…",
+  "stream.error.providerBusyRetrying": "プロバイダーが混雑しています - 再試行中…",
   "stream.error.checkConnection": "接続を確認するか、別のチャンネルをお試しください。",
   "stream.error.hevcHint": "このチャンネルは HEVC (H.265) を使用しており、このデバイスの内蔵プレーヤーでは再生できない場合があります。外部プレーヤーで開いてみてください。",
   "stream.error.schemeUnsupported": "\"{scheme}://\" ストリームは内蔵プレーヤーで再生できません。設定 → 再生で MPV または VLC を設定してください。",

@@ -948,6 +948,7 @@
   "stream.error.cantPlayTitle": "تعذّر تشغيل هذه القناة",
   "stream.error.cantPlay": "تعذّر تشغيل {channel}",
   "stream.error.retrying": "جارٍ المحاولة مرة أخرى…",
+  "stream.error.providerBusyRetrying": "مزوّدك مشغول - جارٍ المحاولة مرة أخرى…",
   "stream.error.checkConnection": "تحقّق من اتصالك أو جرّب قناة أخرى.",
   "stream.error.hevcHint": "تستخدم هذه القناة HEVC (H.265) وقد لا يدعمه المشغّل المدمج على هذا الجهاز. جرّب فتحها في مشغّل خارجي.",
   "stream.error.schemeUnsupported": "تعذّر تشغيل بثوث \"{scheme}://\" في المشغّل المضمَّن. أعدّ MPV أو VLC من الإعدادات → التشغيل.",

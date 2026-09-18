@@ -14,7 +14,7 @@ import {
   xtreamCandidatesFor,
 } from "@/scripts/lib/creds.js"
 import { xtreamApiFetch, resolveStreamUrl, advanceMirror } from "@/scripts/lib/xtream-api.js"
-import { isProviderRejection, shouldRepinMirror } from "@/scripts/lib/stream-reject.ts"
+import { isProviderRejection, shouldRepinMirror, isTransientRejection } from "@/scripts/lib/stream-reject.ts"
 import { normalize, scoreNormMatch } from "@/scripts/lib/text.js"
 import { debounce } from "@/scripts/lib/debounce.js"
 import { t, initI18n, getActiveLocale } from "@/scripts/lib/i18n.js"
@@ -2217,6 +2217,7 @@ const CATCHUP_TUNING_MAX_MS = 22_000
 const STALL_AUTO_TUNE_MS = 30_000
 const BUFFERING_GRACE_MS = 350
 const ERROR_AUTO_RETRY_MS = 1500
+const REJECTION_RETRY_DELAYS_MS = [2000, 4000, 8000]
 const TIMESHIFT_CHIP_UPDATE_MS = 1000
 const TIMESHIFT_CHIP_LIVE_THRESHOLD_MS = 15_000
 const TIMESHIFT_CHIP_IDLE_MS = 3000
@@ -2335,8 +2336,23 @@ function remountFromContext(ctx) {
   } catch {}
 }
 
-/** Same-src retry (or give-up) path used once a provider-rejection mirror hop isn't possible or has run out. */
+/** Same-src retry (or give-up) path; transient rejections get a backoff budget first. */
 function scheduleSameSrcRetry(ctx) {
+  const errorDetail = vjs?.codecInfo?.()?.errorDetail ?? null
+  if (ctx.isLive && !ctx.audioProxied && isTransientRejection({ errorDetail })) {
+    const attempt = ctx.rejectionRetries ?? 0
+    if (attempt < REJECTION_RETRY_DELAYS_MS.length) {
+      ctx.rejectionRetries = attempt + 1
+      const seqAtRetry = ctx.seq
+      toast({ title: t("stream.error.providerBusyRetrying"), duration: REJECTION_RETRY_DELAYS_MS[attempt] })
+      setTimeout(() => {
+        if (seqAtRetry !== playSeq) return
+        if (isCastRoutingActive() || externalPlaybackActive) return
+        remountFromContext(ctx)
+      }, REJECTION_RETRY_DELAYS_MS[attempt])
+      return
+    }
+  }
   if (!ctx.retried) {
     ctx.retried = true
     const seqAtRetry = ctx.seq
@@ -3990,6 +4006,8 @@ function showPlaybackFailurePanel(ctx, opts = {}) {
     reason = t("player.error.http401")
   } else if (httpStatus === 403) {
     reason = t("player.error.http403")
+  } else if (httpStatus === 407) {
+    reason = t("player.error.http403")
   } else if (httpStatus === 404) {
     reason = t("player.error.http404")
   } else if (httpStatus != null && httpStatus >= 500 && httpStatus <= 599) {
@@ -4737,6 +4755,7 @@ async function play(streamId, name, reason = "user") {
     src: mountSrc,
     seq,
     retried: false,
+    rejectionRetries: 0,
     started: false,
     nativeFallbackTried: false,
     audioClockWedge: false,
@@ -5100,6 +5119,7 @@ async function playCatchup(channel, opts) {
     src: resolution.src,
     seq,
     retried: false,
+    rejectionRetries: 0,
     started: false,
     // Skip the Android native-handoff escape hatch for catch-up sessions.
     nativeFallbackTried: true,

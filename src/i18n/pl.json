@@ -948,6 +948,7 @@
   "stream.error.cantPlayTitle": "Nie można odtworzyć tego kanału",
   "stream.error.cantPlay": "Nie udało się odtworzyć {channel}",
   "stream.error.retrying": "Ponawianie…",
+  "stream.error.providerBusyRetrying": "Dostawca jest zajęty - ponawianie…",
   "stream.error.checkConnection": "Sprawdź połączenie lub wybierz inny kanał.",
   "stream.error.hevcHint": "Ten kanał używa HEVC (H.265), którego wbudowany odtwarzacz może nie obsługiwać na tym urządzeniu. Spróbuj otworzyć go w zewnętrznym odtwarzaczu.",
   "stream.error.schemeUnsupported": "Nie można odtwarzać strumieni \"{scheme}://\" we wbudowanym odtwarzaczu. Skonfiguruj MPV lub VLC w Ustawienia → Odtwarzanie.",

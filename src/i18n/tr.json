@@ -948,6 +948,7 @@
   "stream.error.cantPlayTitle": "Bu kanal oynatılamıyor",
   "stream.error.cantPlay": "{channel} oynatılamadı",
   "stream.error.retrying": "Tekrar deneniyor…",
+  "stream.error.providerBusyRetrying": "Sağlayıcı meşgul - tekrar deneniyor…",
   "stream.error.checkConnection": "Bağlantınızı kontrol edin veya başka bir kanal deneyin.",
   "stream.error.hevcHint": "Bu kanal HEVC (H.265) kullanıyor; yerleşik oynatıcı bu cihazda desteklemeyebilir. Harici bir oynatıcıda açmayı dene.",
   "stream.error.schemeUnsupported": "\"{scheme}://\" akışları yerleşik oynatıcıda oynatılamaz. Ayarlar → Oynatma bölümünde MPV veya VLC ayarlayın.",

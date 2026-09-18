@@ -948,6 +948,7 @@
   "stream.error.cantPlayTitle": "Can't play this channel",
   "stream.error.cantPlay": "Couldn't play {channel}",
   "stream.error.retrying": "Retrying…",
+  "stream.error.providerBusyRetrying": "Provider is busy - retrying…",
   "stream.error.checkConnection": "Check your connection or try another channel.",
   "stream.error.hevcHint": "This channel uses HEVC (H.265), which the built-in player may not support on this device. Try opening it in an external player.",
   "stream.error.schemeUnsupported": "Can't play \"{scheme}://\" streams in the embedded player. Set up MPV or VLC in Settings → Playback.",

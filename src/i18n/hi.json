@@ -948,6 +948,7 @@
   "stream.error.cantPlayTitle": "यह चैनल नहीं चलाया जा सकता",
   "stream.error.cantPlay": "{channel} नहीं चला",
   "stream.error.retrying": "फिर से कोशिश की जा रही है…",
+  "stream.error.providerBusyRetrying": "प्रदाता व्यस्त है - फिर से कोशिश की जा रही है…",
   "stream.error.checkConnection": "अपना कनेक्शन जाँचें या कोई दूसरा चैनल आज़माएँ।",
   "stream.error.hevcHint": "यह चैनल HEVC (H.265) इस्तेमाल करता है, जिसे इस डिवाइस पर बिल्ट-इन प्लेयर सपोर्ट नहीं कर सकता। इसे बाहरी प्लेयर में खोलकर देखें।",
   "stream.error.schemeUnsupported": "एम्बेडेड प्लेयर में \"{scheme}://\" स्ट्रीम नहीं चला सकते। सेटिंग्स → प्लेबैक में MPV या VLC सेट करें।",

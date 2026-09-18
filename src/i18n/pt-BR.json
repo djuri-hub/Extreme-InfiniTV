@@ -948,6 +948,7 @@
   "stream.error.cantPlayTitle": "Não foi possível reproduzir este canal",
   "stream.error.cantPlay": "Não foi possível reproduzir {channel}",
   "stream.error.retrying": "Tentando novamente…",
+  "stream.error.providerBusyRetrying": "O provedor está ocupado - tentando novamente…",
   "stream.error.checkConnection": "Verifique sua conexão ou tente outro canal.",
   "stream.error.hevcHint": "Este canal usa HEVC (H.265), que o player integrado pode não suportar neste dispositivo. Tente abrir em um player externo.",
   "stream.error.schemeUnsupported": "Não é possível reproduzir streams \"{scheme}://\" no player integrado. Configure MPV ou VLC em Configurações → Reprodução.",
