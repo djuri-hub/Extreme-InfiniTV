@@ -13,6 +13,8 @@ import {
   moveChannelWithinGroup,
   moveChannelsWithinGroup,
   setOverrides,
+  clearNameOverrides,
+  sortChannels,
   setCatchup,
   setChannelGroup,
   renameGroup,
@@ -21,6 +23,8 @@ import {
   resolveCustomChannels,
   customSourceKey,
   presentSourceKeys,
+  presentSourceKeysByGroup,
+  UNCATEGORIZED,
   type CustomPlaylistDoc,
   type CustomChannel,
   type CustomSource,
@@ -36,6 +40,7 @@ import { debounce } from "@/scripts/lib/debounce.ts"
 import { t, tCount } from "@/scripts/lib/i18n.ts"
 import { toastSuccess, toastError, toastWarn } from "@/scripts/lib/toast.ts"
 import { openCustomChannelEditDialog } from "@/scripts/lib/custom-channel-edit-dialog.ts"
+import { confirmDialog } from "@/scripts/lib/confirm-dialog.ts"
 import { attachDialogSpatialNav, attachPopoverSpatialNav } from "@/scripts/lib/dialog-spatial-nav.ts"
 import { ICON_GRIP_VERTICAL, ICON_ARROW_UP, ICON_ARROW_DOWN, ICON_DOTS_VERTICAL, ICON_CHEVRON_DOWN, ICON_CHECK } from "@/scripts/lib/icons.ts"
 import { log } from "@/scripts/lib/log.ts"
@@ -64,6 +69,7 @@ let orderedChannels: CustomChannel[] = []
 let resolvedChannels: ResolvedCustomChannel[] = []
 let sourceTitleById = new Map<string, string>()
 let presentSourceKeySet = new Set<string>()
+let presentSourceKeysByGroupMap = new Map<string, Set<string>>()
 
 const MAX_UNDO_DEPTH = 20
 const undoStack: CustomPlaylistDoc[] = []
@@ -91,6 +97,8 @@ function isSettledTrackedInput(input: HTMLInputElement): boolean {
 const PANE_STORAGE_KEY = "xt_editor_pane"
 let activePane: "source" | "playlist" = "playlist"
 
+const SOURCE_SORT_STORAGE_KEY = "xt_editor_source_sort"
+
 const COLLAPSED_GROUPS_KEY_PREFIX = "xt_editor_collapsed_groups_"
 let collapsedGroups = new Set<string>()
 
@@ -107,6 +115,9 @@ const saveRetryBtn = byId<HTMLButtonElement>("editor-save-retry")
 const sourceSelect = byId<HTMLSelectElement>("editor-source-select")
 const sourceSearchInput = byId<HTMLInputElement>("editor-source-search")
 const sourceCategorySelect = byId<HTMLSelectElement>("editor-source-category")
+const sourceSortSelect = byId<HTMLSelectElement>("editor-source-sort")
+const sourceSelectAllBtn = byId<HTMLButtonElement>("editor-source-select-all-btn")
+const sourceDeselectAllBtn = byId<HTMLButtonElement>("editor-source-deselect-all-btn")
 const sourceListEl = byId<HTMLElement>("editor-source-list")
 const sourceSpacer = byId<HTMLElement>("editor-source-spacer")
 const sourceViewport = byId<HTMLElement>("editor-source-viewport")
@@ -125,6 +136,7 @@ const bulkSelectedCountEl = byId<HTMLElement>("editor-selected-count")
 const bulkMoveUpBtn = byId<HTMLButtonElement>("editor-bulk-move-up-btn")
 const bulkMoveDownBtn = byId<HTMLButtonElement>("editor-bulk-move-down-btn")
 const bulkMoveToGroupBtn = byId<HTMLButtonElement>("editor-bulk-move-to-group-btn")
+const bulkMoreBtn = byId<HTMLButtonElement>("editor-bulk-more-btn")
 const bulkRemoveBtn = byId<HTMLButtonElement>("editor-bulk-remove-btn")
 const bulkClearBtn = byId<HTMLButtonElement>("editor-bulk-clear-btn")
 const emptyStateEl = byId<HTMLElement>("editor-empty-state")
@@ -302,6 +314,41 @@ function anyUnresolvedChannels(): boolean {
   return resolvedChannels.some((resolved) => resolved.unresolved)
 }
 
+function channelDisplayName(channel: CustomChannel): string {
+  return channel.overrides.name ?? findResolved(channel)?.name ?? ""
+}
+
+/** Drops keys that aren't a non-header row in the current doc. */
+function nonHeaderKeysIn(keys: string[]): string[] {
+  return keys.filter((key) => {
+    const channel = doc.channels.find((item) => item.key === key)
+    return !!channel && !isHeaderChannel(channel)
+  })
+}
+
+/** Non-header keys among the given ones whose name currently carries an override. */
+function nameOverrideKeysIn(keys: string[]): string[] {
+  return nonHeaderKeysIn(keys).filter((key) => doc.channels.find((item) => item.key === key)?.overrides.name != null)
+}
+
+function sortChannelsWithToast(keys: string[], direction: "asc" | "desc"): void {
+  const nextDoc = sortChannels(doc, keys, direction, channelDisplayName)
+  if (nextDoc === doc) return
+  applyDoc(nextDoc)
+  toastSuccess(t("editor.toastSorted"), {
+    action: { label: t("common.undo"), onClick: () => undo() },
+  })
+}
+
+function resetNamesWithToast(keys: string[]): void {
+  const nextDoc = clearNameOverrides(doc, keys)
+  if (nextDoc === doc) return
+  applyDoc(nextDoc)
+  toastSuccess(t("editor.toastNameReset"), {
+    action: { label: t("common.undo"), onClick: () => undo() },
+  })
+}
+
 function sourceTitleForChannel(channel: CustomChannel): string | null {
   const source = channel.sources[0]
   if (!source || source.kind === "direct") return null
@@ -399,6 +446,7 @@ function commitDoc(nextDoc: CustomPlaylistDoc): void {
   doc = nextDoc
   orderedChannels = orderedChannelsByGroup(nextDoc)
   presentSourceKeySet = presentSourceKeys(nextDoc)
+  presentSourceKeysByGroupMap = presentSourceKeysByGroup(nextDoc)
   pruneSelection()
   renderChannelCount()
   renderGroups()
@@ -517,9 +565,16 @@ function handleChannelRowSelectClick(channel: CustomChannel, event: MouseEvent):
   lastSelectedChannelKey = channel.key
 }
 
-function removeSelectedChannelsWithUndo(): void {
+async function removeSelectedChannelsWithUndo(): Promise<void> {
   const keys = [...selectedChannelKeys]
   if (!keys.length) return
+  const confirmed = await confirmDialog({
+    title: t("editor.removeSelectedTitle"),
+    message: tCount("editor.removeSelectedConfirm", keys.length),
+    confirmLabel: t("editor.removeSelected"),
+    destructive: true,
+  })
+  if (!confirmed) return
   applyDoc(removeChannels(doc, keys))
   toastSuccess(tCount("editor.toastChannelsRemoved", keys.length), {
     action: { label: t("common.undo"), onClick: () => undo() },
@@ -535,6 +590,35 @@ function openBulkMoveToGroupMenu(trigger: HTMLButtonElement): void {
     onClick: () => applyDoc(setChannelGroup(doc, keys, group)),
   }))
   openMenu(trigger, items, t("editor.moveToGroupLabel"))
+}
+
+function openBulkMoreMenu(trigger: HTMLButtonElement): void {
+  const keys = [...selectedChannelKeys]
+  if (!keys.length) return
+  const sortableKeys = nonHeaderKeysIn(keys)
+  const resettableKeys = nameOverrideKeysIn(keys)
+  const items: MenuItemDef[] = [
+    {
+      key: "sort-az",
+      label: t("editor.sortAz"),
+      disabled: sortableKeys.length < 2,
+      onClick: () => sortChannelsWithToast(sortableKeys, "asc"),
+    },
+    {
+      key: "sort-za",
+      label: t("editor.sortZa"),
+      disabled: sortableKeys.length < 2,
+      onClick: () => sortChannelsWithToast(sortableKeys, "desc"),
+    },
+    {
+      key: "reset-name",
+      label: t("editor.resetName"),
+      disabled: !resettableKeys.length,
+      separatorBefore: true,
+      onClick: () => resetNamesWithToast(resettableKeys),
+    },
+  ]
+  openMenu(trigger, items, t("editor.moreActions"))
 }
 
 function wireSelectionEscape(): void {
@@ -603,6 +687,24 @@ const scheduleTitleSave = debounce(saveTitleNow, 400)
 // ---------------------------------------------------------------------------
 // Source browser (left pane)
 // ---------------------------------------------------------------------------
+function loadSourceSortMode(): void {
+  if (!sourceSortSelect) return
+  try {
+    const stored = sessionStorage.getItem(SOURCE_SORT_STORAGE_KEY)
+    if (stored === "default" || stored === "az" || stored === "za") sourceSortSelect.value = stored
+  } catch {
+    // sessionStorage unavailable (private browsing etc); keep the default.
+  }
+}
+
+function saveSourceSortMode(mode: string): void {
+  try {
+    sessionStorage.setItem(SOURCE_SORT_STORAGE_KEY, mode)
+  } catch {
+    // Best-effort only.
+  }
+}
+
 function populateSourceSelect(entries: any[]): void {
   if (!sourceSelect) return
   const candidates = entries.filter((entry) => entry._id !== entryId && entry.type !== "custom")
@@ -725,6 +827,16 @@ function applySourceFilter(): void {
     const norm = channel.norm || normalize(`${channel.name || ""} ${channel.category || ""}`)
     return tokens.every((token) => norm.includes(token))
   })
+  const sortMode = sourceSortSelect?.value || "default"
+  if (sortMode === "az" || sortMode === "za") {
+    filteredSourceChannels = [...filteredSourceChannels].sort((left, right) => {
+      const compared = (left.name || "").localeCompare(right.name || "", undefined, {
+        sensitivity: "base",
+        numeric: true,
+      })
+      return sortMode === "az" ? compared : -compared
+    })
+  }
   renderSourceList()
 }
 
@@ -771,6 +883,15 @@ function sourceRowKey(channel: any): string | null {
   return null
 }
 
+/** Groups already carrying this source key. */
+function groupsContainingSourceCount(rowKey: string): number {
+  let count = 0
+  for (const groupKeys of presentSourceKeysByGroupMap.values()) {
+    if (groupKeys.has(rowKey)) count++
+  }
+  return count
+}
+
 function buildSourceRow(channel: any, idx: number): HTMLElement {
   const row = document.createElement("div")
   row.className =
@@ -781,13 +902,12 @@ function buildSourceRow(channel: any, idx: number): HTMLElement {
   const checked = selectedIds.has(channel.id)
   if (checked) row.classList.add("bg-accent-soft")
   const rowKey = sourceRowKey(channel)
-  const alreadyAdded = !!rowKey && presentSourceKeySet.has(rowKey)
+  const addedGroupCount = rowKey ? groupsContainingSourceCount(rowKey) : 0
 
   const checkbox = document.createElement("input")
   checkbox.type = "checkbox"
   checkbox.className = "size-4 shrink-0"
   checkbox.checked = checked
-  checkbox.disabled = alreadyAdded
   checkbox.setAttribute("aria-label", channel.name || "")
   checkbox.addEventListener("click", (event) => {
     event.stopPropagation()
@@ -806,10 +926,10 @@ function buildSourceRow(channel: any, idx: number): HTMLElement {
 
   row.append(checkbox, info)
 
-  if (alreadyAdded) {
+  if (addedGroupCount > 0) {
     const badge = document.createElement("span")
     badge.className = "inline-flex items-center gap-1 shrink-0 text-2xs text-fg-3"
-    badge.innerHTML = `${ICON_CHECK}<span>${escapeHtml(t("editor.addedBadge"))}</span>`
+    badge.innerHTML = `${ICON_CHECK}<span>${escapeHtml(tCount("editor.addedInGroups", addedGroupCount))}</span>`
     row.appendChild(badge)
   }
 
@@ -826,8 +946,6 @@ function buildSourceRow(channel: any, idx: number): HTMLElement {
 function handleSourceRowClick(idx: number, event: MouseEvent): void {
   const channel = filteredSourceChannels[idx]
   if (!channel) return
-  const rowKey = sourceRowKey(channel)
-  if (rowKey && presentSourceKeySet.has(rowKey)) return
   if (event.shiftKey && lastClickedIndex !== -1) {
     const [start, end] = idx < lastClickedIndex ? [idx, lastClickedIndex] : [lastClickedIndex, idx]
     for (let i = start; i <= end; i++) {
@@ -839,6 +957,23 @@ function handleSourceRowClick(idx: number, event: MouseEvent): void {
     else selectedIds.add(channel.id)
     lastClickedIndex = idx
   }
+  updateSelectedCount()
+  renderSourceList()
+}
+
+function selectAllFilteredSourceChannels(): void {
+  for (const channel of filteredSourceChannels) {
+    if (!sourceRowKey(channel)) continue
+    selectedIds.add(channel.id)
+  }
+  lastClickedIndex = -1
+  updateSelectedCount()
+  renderSourceList()
+}
+
+function deselectAllFilteredSourceChannels(): void {
+  for (const channel of filteredSourceChannels) selectedIds.delete(channel.id)
+  lastClickedIndex = -1
   updateSelectedCount()
   renderSourceList()
 }
@@ -870,7 +1005,8 @@ async function addSelectedChannels(): Promise<void> {
   const sourceEntry = entries.find((entry: any) => entry._id === requestedSourceEntryId)
   if (!sourceEntry) return
   const overrideGroup = sourceTargetGroupInput?.value.trim() || ""
-  const seenKeys = new Set(presentSourceKeySet)
+  const seenKeysByGroup = new Map<string, Set<string>>()
+  for (const [group, keys] of presentSourceKeysByGroupMap) seenKeysByGroup.set(group, new Set(keys))
   let nextDoc = doc
   let addedCount = 0
   let skippedCount = 0
@@ -879,11 +1015,14 @@ async function addSelectedChannels(): Promise<void> {
     const source = buildSourceForChannel(sourceEntry, channel)
     if (!source) continue
     const key = customSourceKey(source)
-    if (seenKeys.has(key)) {
+    const targetGroup = overrideGroup || channel.category || UNCATEGORIZED
+    const groupKeys = seenKeysByGroup.get(targetGroup)
+    if (groupKeys?.has(key)) {
       skippedCount++
       continue
     }
-    seenKeys.add(key)
+    if (groupKeys) groupKeys.add(key)
+    else seenKeysByGroup.set(targetGroup, new Set([key]))
     const result = addChannel(nextDoc, source, {
       name: channel.name || "",
       logo: channel.logo || null,
@@ -1391,7 +1530,20 @@ function openGroupMenu(
       disabled: !anySelected,
       onClick: () => deselectGroupChannels(groupChannelKeys),
     },
-    { key: "delete", label: t("editor.deleteGroup"), destructive: true, onClick: () => deleteGroupWithToast(groupName) },
+    {
+      key: "sort-az",
+      label: t("editor.sortAz"),
+      separatorBefore: true,
+      disabled: nonHeaderKeysIn(groupChannelKeys).length < 2,
+      onClick: () => sortChannelsWithToast(nonHeaderKeysIn(groupChannelKeys), "asc"),
+    },
+    {
+      key: "sort-za",
+      label: t("editor.sortZa"),
+      disabled: nonHeaderKeysIn(groupChannelKeys).length < 2,
+      onClick: () => sortChannelsWithToast(nonHeaderKeysIn(groupChannelKeys), "desc"),
+    },
+    { key: "delete", label: t("editor.deleteGroup"), destructive: true, separatorBefore: true, onClick: () => deleteGroupWithToast(groupName) },
   ]
   openMenu(anchor, items, t("common.moreOptionsAria", { title: groupName }))
   menuAnchorGroupName = groupName
@@ -1853,10 +2005,30 @@ function openBulkRowMenu(trigger: HTMLButtonElement, anchorKey: string): void {
       onClick: () => openBulkMoveToGroupMenu(trigger),
     },
     {
+      key: "sort-az",
+      label: t("editor.sortAz"),
+      separatorBefore: true,
+      disabled: nonHeaderKeysIn(keys).length < 2,
+      onClick: () => sortChannelsWithToast(nonHeaderKeysIn(keys), "asc"),
+    },
+    {
+      key: "sort-za",
+      label: t("editor.sortZa"),
+      disabled: nonHeaderKeysIn(keys).length < 2,
+      onClick: () => sortChannelsWithToast(nonHeaderKeysIn(keys), "desc"),
+    },
+    {
+      key: "reset-name",
+      label: t("editor.resetName"),
+      disabled: !nameOverrideKeysIn(keys).length,
+      onClick: () => resetNamesWithToast(nameOverrideKeysIn(keys)),
+    },
+    {
       key: "remove",
       label: t("editor.removeSelected"),
       destructive: true,
-      onClick: () => removeSelectedChannelsWithUndo(),
+      separatorBefore: true,
+      onClick: () => void removeSelectedChannelsWithUndo(),
     },
     { key: "clear", label: t("editor.clearSelection"), separatorBefore: true, onClick: () => clearSelection() },
   ]
@@ -1883,6 +2055,13 @@ function openRowMenu(trigger: HTMLButtonElement, channel: CustomChannel): void {
         const nameEl = row?.querySelector<HTMLElement>('[data-role="name-text"]')
         if (nameRow && nameEl) startRowRename(nameRow, nameEl, channel)
       },
+    })
+  }
+  if (!isHeader && !resolved?.unresolved && channel.overrides.name != null) {
+    items.push({
+      key: "reset-name",
+      label: t("editor.resetName"),
+      onClick: () => resetNamesWithToast([channel.key]),
     })
   }
   items.push({
@@ -2499,7 +2678,7 @@ function wireKeyboardShortcuts(): void {
       if (target?.tagName === "INPUT" || target?.isContentEditable) return
       event.preventDefault()
       if (rowInSelection) {
-        removeSelectedChannelsWithUndo()
+        void removeSelectedChannelsWithUndo()
         return
       }
       const channel = doc.channels.find((item) => item.key === rowKey)
@@ -2547,6 +2726,7 @@ async function init(): Promise<void> {
   sourceTitleById = new Map(entries.map((entry: any) => [entry._id, entry.title || entry._id]))
   loadActivePane()
   loadCollapsedGroups()
+  loadSourceSortMode()
 
   try {
     doc = await loadCustomDoc(entryId)
@@ -2557,6 +2737,7 @@ async function init(): Promise<void> {
     return
   }
   presentSourceKeySet = presentSourceKeys(doc)
+  presentSourceKeysByGroupMap = presentSourceKeysByGroup(doc)
 
   byId("editor-main")?.classList.remove("hidden")
   byId("editor-main")?.classList.add("flex")
@@ -2578,6 +2759,12 @@ async function init(): Promise<void> {
   sourceSelect?.addEventListener("change", () => void onSourceChange())
   sourceSearchInput?.addEventListener("input", debounce(() => applySourceFilter(), 150))
   sourceCategorySelect?.addEventListener("change", () => applySourceFilter())
+  sourceSortSelect?.addEventListener("change", () => {
+    saveSourceSortMode(sourceSortSelect.value)
+    applySourceFilter()
+  })
+  sourceSelectAllBtn?.addEventListener("click", () => selectAllFilteredSourceChannels())
+  sourceDeselectAllBtn?.addEventListener("click", () => deselectAllFilteredSourceChannels())
   sourceListEl?.addEventListener("scroll", scheduleSourceRender)
   addSelectedBtn?.addEventListener("click", () => void addSelectedChannels())
   undoBtn?.addEventListener("click", () => undo())
@@ -2591,7 +2778,8 @@ async function init(): Promise<void> {
   bulkMoveUpBtn?.addEventListener("click", () => applyDoc(moveChannelsWithinGroup(doc, [...selectedChannelKeys], "up")))
   bulkMoveDownBtn?.addEventListener("click", () => applyDoc(moveChannelsWithinGroup(doc, [...selectedChannelKeys], "down")))
   bulkMoveToGroupBtn?.addEventListener("click", () => openBulkMoveToGroupMenu(bulkMoveToGroupBtn))
-  bulkRemoveBtn?.addEventListener("click", () => removeSelectedChannelsWithUndo())
+  bulkMoreBtn?.addEventListener("click", () => openBulkMoreMenu(bulkMoreBtn))
+  bulkRemoveBtn?.addEventListener("click", () => void removeSelectedChannelsWithUndo())
   bulkClearBtn?.addEventListener("click", () => clearSelection())
 
   wirePaneSwitcher()

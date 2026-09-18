@@ -3,7 +3,7 @@
 import { getLocalContent, setLocalContent } from "@/scripts/lib/local-content.js"
 import { normalize } from "@/scripts/lib/text.ts"
 
-const UNCATEGORIZED = "Uncategorized"
+export const UNCATEGORIZED = "Uncategorized"
 
 export interface CustomSourceXtream {
   kind: "xtream"
@@ -339,6 +339,42 @@ export function moveChannelsWithinGroup(
   return { ...doc, channels }
 }
 
+/** Sorts the selected channels into the positions they already occupy, per group. */
+export function sortChannels(
+  doc: CustomPlaylistDoc,
+  keys: string[],
+  direction: "asc" | "desc",
+  nameOf: (channel: CustomChannel) => string
+): CustomPlaylistDoc {
+  const keySet = new Set(keys)
+  const selectedByGroup = new Map<string, CustomChannel[]>()
+  for (const channel of doc.channels) {
+    if (!keySet.has(channel.key) || isHeaderChannel(channel)) continue
+    const bucket = selectedByGroup.get(channel.group)
+    if (bucket) bucket.push(channel)
+    else selectedByGroup.set(channel.group, [channel])
+  }
+  if (!selectedByGroup.size) return doc
+
+  const compare = (left: CustomChannel, right: CustomChannel): number => {
+    const result = nameOf(left).localeCompare(nameOf(right), undefined, { sensitivity: "base", numeric: true })
+    return direction === "asc" ? result : -result
+  }
+  const sortedByGroup = new Map<string, CustomChannel[]>()
+  for (const [group, groupChannels] of selectedByGroup) {
+    sortedByGroup.set(group, [...groupChannels].sort(compare))
+  }
+
+  const cursorByGroup = new Map<string, number>()
+  const channels = doc.channels.map((channel) => {
+    if (!keySet.has(channel.key) || isHeaderChannel(channel)) return channel
+    const cursor = cursorByGroup.get(channel.group) ?? 0
+    cursorByGroup.set(channel.group, cursor + 1)
+    return sortedByGroup.get(channel.group)![cursor]
+  })
+  return { ...doc, channels }
+}
+
 export function setOverrides(
   doc: CustomPlaylistDoc,
   key: string,
@@ -348,6 +384,17 @@ export function setOverrides(
     channel.key === key ? { ...channel, overrides: { ...channel.overrides, ...patch } } : channel
   )
   return { ...doc, channels }
+}
+
+export function clearNameOverrides(doc: CustomPlaylistDoc, keys: string[]): CustomPlaylistDoc {
+  const keySet = new Set(keys)
+  let changed = false
+  const channels = doc.channels.map((channel) => {
+    if (!keySet.has(channel.key) || channel.overrides.name === null) return channel
+    changed = true
+    return { ...channel, overrides: { ...channel.overrides, name: null } }
+  })
+  return changed ? { ...doc, channels } : doc
 }
 
 export function setCatchup(
@@ -374,6 +421,20 @@ export function presentSourceKeys(doc: CustomPlaylistDoc): Set<string> {
     if (source) keys.add(customSourceKey(source))
   }
   return keys
+}
+
+/** Source keys present per group. */
+export function presentSourceKeysByGroup(doc: CustomPlaylistDoc): Map<string, Set<string>> {
+  const byGroup = new Map<string, Set<string>>()
+  for (const channel of doc.channels) {
+    const source = channel.sources[0]
+    if (!source) continue
+    const key = customSourceKey(source)
+    const bucket = byGroup.get(channel.group)
+    if (bucket) bucket.add(key)
+    else byGroup.set(channel.group, new Set([key]))
+  }
+  return byGroup
 }
 
 export function setChannelGroup(doc: CustomPlaylistDoc, keys: string[], group: string): CustomPlaylistDoc {

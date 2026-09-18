@@ -86,9 +86,15 @@ export function openCustomChannelEditDialog(init: CustomChannelEditInit): Promis
         <div class="flex flex-col gap-4">
           ${fieldRow(
             t("editor.nameLabel"),
-            `<input type="text" data-role="name" class="${INPUT_CLASS}" value="${escapeHtml(currentName)}"
-               placeholder="${escapeHtml(resolvedName)}" autocomplete="off" spellcheck="false"
-               maxlength="${MAX_OVERRIDE_NAME_LENGTH}" />`
+            `<span class="flex items-center gap-3">
+               <input type="text" data-role="name" class="${INPUT_CLASS}" value="${escapeHtml(currentName)}"
+                 placeholder="${escapeHtml(resolvedName)}" autocomplete="off" spellcheck="false"
+                 maxlength="${MAX_OVERRIDE_NAME_LENGTH}" />
+               <button type="button" data-role="use-source-name"
+                 class="shrink-0 text-xs font-medium text-accent hover:underline focus-visible:underline focus-visible:outline-none">
+                 ${escapeHtml(t("editor.resetName"))}
+               </button>
+             </span>`
           )}
           ${fieldRow(
             t("editor.logoLabel"),
@@ -174,6 +180,11 @@ export function openCustomChannelEditDialog(init: CustomChannelEditInit): Promis
     })
 
     const nameInput = dialog.querySelector<HTMLInputElement>('[data-role="name"]')
+    dialog.querySelector('[data-role="use-source-name"]')?.addEventListener("click", () => {
+      if (!nameInput) return
+      nameInput.value = ""
+      nameInput.focus()
+    })
     const logoInput = dialog.querySelector<HTMLInputElement>('[data-role="logo"]')
     const chnoInput = dialog.querySelector<HTMLInputElement>('[data-role="chno"]')
     const tvgIdInput = dialog.querySelector<HTMLInputElement>('[data-role="tvgid"]')

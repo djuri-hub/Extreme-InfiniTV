@@ -15,6 +15,9 @@ import {
   IconTrash,
   IconX,
   IconReplace,
+  IconArrowsSort,
+  IconSelectAll,
+  IconDeselect,
 } from "@tabler/icons-svelte"
 ---
 
@@ -174,7 +177,7 @@ import {
             <select id="editor-source-select" class="field-input"></select>
           </label>
 
-          <div class="flex gap-2">
+          <div class="flex flex-wrap gap-2">
             <label class="flex-1 min-w-0">
               <span class="sr-only" data-i18n="list.searchChannels">Search channels</span>
               <input
@@ -189,6 +192,25 @@ import {
               <span class="sr-only" data-i18n="editor.categoryFilterLabel">Category</span>
               <select id="editor-source-category" class="field-input"></select>
             </label>
+            <label class="w-36 shrink-0">
+              <span class="sr-only" data-i18n="editor.sourceSortLabel">Sort</span>
+              <select id="editor-source-sort" class="field-input">
+                <option value="default" data-i18n="editor.sourceSortDefault">Provider order</option>
+                <option value="az" data-i18n="editor.sortAz">Sort A-Z</option>
+                <option value="za" data-i18n="editor.sortZa">Sort Z-A</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <button id="editor-source-select-all-btn" type="button" class="btn shrink-0 justify-center gap-2 px-3.5">
+              <IconSelectAll aria-hidden="true" class="btn-icon" />
+              <span data-i18n="editor.sourceSelectAll">Select all</span>
+            </button>
+            <button id="editor-source-deselect-all-btn" type="button" class="btn shrink-0 justify-center gap-2 px-3.5">
+              <IconDeselect aria-hidden="true" class="btn-icon" />
+              <span data-i18n="editor.sourceDeselectAll">Deselect all</span>
+            </button>
           </div>
 
           <div
@@ -253,6 +275,10 @@ import {
               <button id="editor-bulk-move-to-group-btn" type="button" class="btn shrink-0 justify-center gap-2 px-3.5">
                 <IconFolderSymlink aria-hidden="true" class="btn-icon" />
                 <span data-i18n="editor.moveToGroupLabel">Move to group</span>
+              </button>
+              <button id="editor-bulk-more-btn" type="button" class="btn shrink-0 justify-center gap-2 px-3.5">
+                <IconArrowsSort aria-hidden="true" class="btn-icon" />
+                <span data-i18n="editor.moreActions">More</span>
               </button>
               <button id="editor-bulk-remove-btn" type="button" class="btn-danger shrink-0 justify-center gap-2 px-3.5">
                 <IconTrash aria-hidden="true" class="btn-icon" />

@@ -26,6 +26,8 @@ import {
   moveChannelWithinGroup,
   moveChannelsWithinGroup,
   setOverrides,
+  clearNameOverrides,
+  sortChannels,
   setCatchup,
   setChannelGroup,
   renameGroup,
@@ -36,6 +38,7 @@ import {
   collectDependentCustomEntryIds,
   customSourceKey,
   presentSourceKeys,
+  presentSourceKeysByGroup,
   type CustomSource,
   type SourcePool,
 } from "@/scripts/lib/custom-playlist.ts"
@@ -498,6 +501,138 @@ describe("setOverrides", () => {
     expect(patched?.overrides.logo).toBe("http://logo")
     expect(patched?.overrides.name).toBe("A")
     expect(untouched?.overrides.logo).toBeNull()
+  })
+})
+
+describe("clearNameOverrides", () => {
+  it("clears the name override for the given keys, leaving other overrides untouched", () => {
+    let doc = emptyCustomDoc()
+    const first = addChannel(doc, xtreamSource("p1", 1), { name: "A", logo: "http://logo" })
+    doc = first.doc
+
+    const result = clearNameOverrides(doc, [first.channel.key])
+    const patched = result.channels.find((channel) => channel.key === first.channel.key)
+    expect(patched?.overrides.name).toBeNull()
+    expect(patched?.overrides.logo).toBe("http://logo")
+  })
+
+  it("leaves channels without a name override untouched and is a no-op", () => {
+    let doc = emptyCustomDoc()
+    doc = addChannel(doc, xtreamSource("p1", 1), {}).doc
+    const result = clearNameOverrides(doc, [doc.channels[0].key])
+    expect(result).toBe(doc)
+  })
+
+  it("ignores unknown keys", () => {
+    let doc = emptyCustomDoc()
+    doc = addChannel(doc, xtreamSource("p1", 1), { name: "A" }).doc
+    const result = clearNameOverrides(doc, ["missing-key"])
+    expect(result).toBe(doc)
+  })
+
+  it("does not mutate the input doc", () => {
+    let doc = emptyCustomDoc()
+    doc = addChannel(doc, xtreamSource("p1", 1), { name: "A" }).doc
+    const snapshot = JSON.parse(JSON.stringify(doc))
+    clearNameOverrides(doc, [doc.channels[0].key])
+    expect(doc).toEqual(snapshot)
+  })
+})
+
+describe("sortChannels", () => {
+  const nameOf = (channel: ReturnType<typeof emptyCustomDoc>["channels"][number]) =>
+    channel.overrides.name ?? ""
+
+  it("sorts the selected channels within one group, keeping their positions", () => {
+    let doc = emptyCustomDoc()
+    const c = addChannel(doc, xtreamSource("p1", 1), { name: "Charlie", group: "News" })
+    doc = c.doc
+    const a = addChannel(doc, xtreamSource("p1", 2), { name: "Alpha", group: "News" })
+    doc = a.doc
+    const b = addChannel(doc, xtreamSource("p1", 3), { name: "Bravo", group: "News" })
+    doc = b.doc
+
+    const result = sortChannels(doc, [c.channel.key, a.channel.key, b.channel.key], "asc", nameOf)
+    expect(result.channels.map((channel) => channel.overrides.name)).toEqual(["Alpha", "Bravo", "Charlie"])
+  })
+
+  it("sorts descending", () => {
+    let doc = emptyCustomDoc()
+    const a = addChannel(doc, xtreamSource("p1", 1), { name: "Alpha", group: "News" })
+    doc = a.doc
+    const b = addChannel(doc, xtreamSource("p1", 2), { name: "Bravo", group: "News" })
+    doc = b.doc
+
+    const result = sortChannels(doc, [a.channel.key, b.channel.key], "desc", nameOf)
+    expect(result.channels.map((channel) => channel.overrides.name)).toEqual(["Bravo", "Alpha"])
+  })
+
+  it("sorts across two groups independently, keeping each channel in its own group's positions", () => {
+    let doc = emptyCustomDoc()
+    const newsC = addChannel(doc, xtreamSource("p1", 1), { name: "Charlie", group: "News" })
+    doc = newsC.doc
+    const sportZ = addChannel(doc, xtreamSource("p1", 2), { name: "Zulu", group: "Sport" })
+    doc = sportZ.doc
+    const newsA = addChannel(doc, xtreamSource("p1", 3), { name: "Alpha", group: "News" })
+    doc = newsA.doc
+    const sportY = addChannel(doc, xtreamSource("p1", 4), { name: "Yankee", group: "Sport" })
+    doc = sportY.doc
+
+    const result = sortChannels(
+      doc,
+      [newsC.channel.key, sportZ.channel.key, newsA.channel.key, sportY.channel.key],
+      "asc",
+      nameOf
+    )
+    // Position order is unchanged (News, Sport, News, Sport); only each group's own values are sorted.
+    expect(result.channels.map((channel) => channel.group)).toEqual(["News", "Sport", "News", "Sport"])
+    expect(result.channels.map((channel) => channel.overrides.name)).toEqual(["Alpha", "Yankee", "Charlie", "Zulu"])
+  })
+
+  it("ignores keys that don't exist in the doc", () => {
+    let doc = emptyCustomDoc()
+    doc = addChannel(doc, xtreamSource("p1", 1), { name: "Alpha", group: "News" }).doc
+    const result = sortChannels(doc, ["missing-key"], "asc", nameOf)
+    expect(result).toBe(doc)
+  })
+
+  it("is stable for equal names", () => {
+    let doc = emptyCustomDoc()
+    const b = addChannel(doc, xtreamSource("p1", 1), { name: "Bravo", group: "News" })
+    doc = b.doc
+    const a1 = addChannel(doc, xtreamSource("p1", 2), { name: "Alpha", group: "News" })
+    doc = a1.doc
+    const a2 = addChannel(doc, xtreamSource("p1", 3), { name: "Alpha", group: "News" })
+    doc = a2.doc
+
+    const result = sortChannels(doc, [b.channel.key, a1.channel.key, a2.channel.key], "asc", nameOf)
+    expect(result.channels.map((channel) => channel.key)).toEqual([a1.channel.key, a2.channel.key, b.channel.key])
+  })
+
+  it("never moves header rows even when their key is included", () => {
+    let doc = emptyCustomDoc()
+    const b = addChannel(doc, xtreamSource("p1", 1), { name: "Bravo", group: "News" })
+    doc = b.doc
+    doc = addHeader(doc, "News", "Regional")
+    const headerKey = doc.channels[doc.channels.length - 1].key
+    const a = addChannel(doc, xtreamSource("p1", 2), { name: "Alpha", group: "News" })
+    doc = a.doc
+
+    const result = sortChannels(doc, [b.channel.key, headerKey, a.channel.key], "asc", nameOf)
+    // Header stays at its own position; only the two real channels swap.
+    expect(result.channels.map((channel) => channel.key)).toEqual([a.channel.key, headerKey, b.channel.key])
+    expect(result.channels.find((channel) => channel.key === headerKey)?.overrides.name).toBe("Regional")
+  })
+
+  it("does not mutate the input doc", () => {
+    let doc = emptyCustomDoc()
+    const b = addChannel(doc, xtreamSource("p1", 1), { name: "Bravo", group: "News" })
+    doc = b.doc
+    const a = addChannel(doc, xtreamSource("p1", 2), { name: "Alpha", group: "News" })
+    doc = a.doc
+    const snapshot = JSON.parse(JSON.stringify(doc))
+    sortChannels(doc, [b.channel.key, a.channel.key], "asc", nameOf)
+    expect(doc).toEqual(snapshot)
   })
 })
 
@@ -1351,6 +1486,28 @@ describe("resolveCustomChannels", () => {
     expect(malformedNoSourcesResolved?.unresolved).toBe(true)
   })
 
+  it("resolves two channels that reference the same source independently", () => {
+    const pools = new Map<string, SourcePool>([
+      [
+        "p1",
+        {
+          kind: "xtream",
+          channels: [{ id: 10, name: "BBC One", logo: "http://logo/bbc" }],
+          buildUrl: (streamId: number) => `http://host/${streamId}.m3u8`,
+        },
+      ],
+    ])
+    let doc = emptyCustomDoc()
+    doc = addChannel(doc, xtreamSource("p1", 10), { group: "News", name: "BBC (News)" }).doc
+    doc = addChannel(doc, xtreamSource("p1", 10), { group: "Favorites", name: "BBC (Favorites)" }).doc
+
+    const resolved = resolveCustomChannels(doc, pools)
+    expect(resolved).toHaveLength(2)
+    expect(resolved.every((channel) => channel.url === "http://host/10.m3u8")).toBe(true)
+    expect(resolved.map((channel) => channel.name).sort()).toEqual(["BBC (Favorites)", "BBC (News)"])
+    expect(resolved.map((channel) => channel.category).sort()).toEqual(["Favorites", "News"])
+  })
+
   it("resolves a header as a non-playable row that is never unresolved", () => {
     let doc = emptyCustomDoc()
     doc = addHeader(doc, "News", "Regional")
@@ -1438,5 +1595,22 @@ describe("customSourceKey / presentSourceKeys", () => {
     expect(keys).toEqual(new Set(["x:p1:10", "m:p2:http://host/a.m3u8"]))
     expect(keys.has(customSourceKey(xtreamSource("p1", 10)))).toBe(true)
     expect(keys.has(customSourceKey(xtreamSource("p1", 99)))).toBe(false)
+  })
+})
+
+describe("presentSourceKeysByGroup", () => {
+  it("buckets source keys per group, so the same source can live in more than one group", () => {
+    let doc = emptyCustomDoc()
+    doc = addChannel(doc, xtreamSource("p1", 10), { name: "A", group: "News" }).doc
+    doc = addChannel(doc, xtreamSource("p1", 10), { name: "A copy", group: "Favorites" }).doc
+    doc = addChannel(doc, m3uSource("p2", "http://host/b.m3u8", "B"), { name: "B", group: "News" }).doc
+
+    const byGroup = presentSourceKeysByGroup(doc)
+    expect(byGroup.get("News")).toEqual(new Set(["x:p1:10", "m:p2:http://host/b.m3u8"]))
+    expect(byGroup.get("Favorites")).toEqual(new Set(["x:p1:10"]))
+  })
+
+  it("returns an empty map for a doc with no channels", () => {
+    expect(presentSourceKeysByGroup(emptyCustomDoc()).size).toBe(0)
   })
 })
