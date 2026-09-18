@@ -771,6 +771,7 @@
   "backup.restore.confirm": "Herstellen",
   "backup.section.creds": "Afspeellijsten en inloggegevens",
   "backup.section.localContent": "Inhoud van lokale en aangepaste afspeellijsten",
+  "backup.section.localContent.hint": "Vereist dat de bijbehorende afspeellijsten aanwezig zijn of hersteld worden.",
   "backup.section.epgOffsets": "EPG-tijdverschuivingen",
   "backup.section.prefs": "Favorieten, later kijken, voortgang en categorie-instellingen",
   "backup.section.tvDevices": "Gekoppelde tv-apparaten",

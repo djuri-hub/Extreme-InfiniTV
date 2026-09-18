@@ -771,6 +771,7 @@
   "backup.restore.confirm": "Восстановить",
   "backup.section.creds": "Плейлисты и данные для входа",
   "backup.section.localContent": "Содержимое локальных и пользовательских плейлистов",
+  "backup.section.localContent.hint": "Требует наличия или восстановления соответствующих плейлистов.",
   "backup.section.epgOffsets": "Смещения времени EPG",
   "backup.section.prefs": "Избранное, «посмотреть позже», прогресс и настройки категорий",
   "backup.section.tvDevices": "Сопряжённые ТВ-устройства",

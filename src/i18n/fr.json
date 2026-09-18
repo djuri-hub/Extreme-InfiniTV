@@ -771,6 +771,7 @@
   "backup.restore.confirm": "Restaurer",
   "backup.section.creds": "Listes de lecture et identifiants",
   "backup.section.localContent": "Contenu des listes locales et personnalisées",
+  "backup.section.localContent.hint": "Nécessite que les listes de lecture correspondantes soient présentes ou restaurées.",
   "backup.section.epgOffsets": "Décalages horaires du programme TV",
   "backup.section.prefs": "Favoris, à voir plus tard, progression et paramètres de catégories",
   "backup.section.tvDevices": "Appareils TV associés",

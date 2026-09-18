@@ -7,6 +7,7 @@ import { escapeHtml } from "@/scripts/lib/format.ts"
 const DIALOG_ID = "xt-backup-sections-dialog"
 
 const SECTION_HINT_KEYS: Record<string, string> = {
+  localContent: "backup.section.localContent.hint",
   tvDevices: "backup.section.tvDevices.hint",
   appSettings: "backup.section.appSettings.hint",
 }
@@ -107,6 +108,7 @@ export function pickBackupSections(present: string[]): Promise<Set<string> | nul
   return new Promise((resolve) => {
     const node = ensureDialog()
     settle(null)
+    if (node.open) node.close()
     resolveFn = resolve
 
     const titleEl = node.querySelector('[data-role="title"]') as HTMLElement

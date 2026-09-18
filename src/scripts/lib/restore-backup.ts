@@ -18,36 +18,47 @@ export interface BackupSummary {
   sections: string[]
 }
 
-export interface RestoreBackupOptions {
-  fileInput: HTMLInputElement | null
+export interface RestoreTextOptions {
   logTag: string
   onRestored?: (summary: BackupSummary) => void | Promise<void>
-  onBusyChange?: (busy: boolean) => void
   successDuration?: number
 }
 
-async function applyBackupText(text: string, options: RestoreBackupOptions) {
+export interface RestoreBackupOptions extends RestoreTextOptions {
+  fileInput: HTMLInputElement | null
+  onBusyChange?: (busy: boolean) => void
+}
+
+/** Parse -> validate -> pick sections -> import -> toast. Returns true only when an import ran. */
+export async function restoreBackupText(text: string, options: RestoreTextOptions): Promise<boolean> {
   let parsed: unknown
   try {
     parsed = JSON.parse(text)
   } catch (parseError) {
     log.warn(`[${options.logTag}] backup JSON parse failed:`, parseError)
     toastError(t("settings.toast.backupParseFail"), { description: "Not valid JSON." })
-    return
+    return false
   }
-  const { BACKUP_SECTIONS, importAll } = await import("@/scripts/lib/backup.js")
-  const present = BACKUP_SECTIONS.filter(
-    (name: string) => parsed && typeof parsed === "object" && name in (parsed as Record<string, unknown>)
-  )
-  const sections = await pickBackupSections(present)
-  if (!sections) return
   try {
+    const { BACKUP_SECTIONS, BACKUP_FORMAT_MARKER_ERROR, importAll, isBackupBlob } = await import(
+      "@/scripts/lib/backup.js"
+    )
+    if (!isBackupBlob(parsed)) {
+      toastError(t("settings.toast.backupRestoreFail"), { description: BACKUP_FORMAT_MARKER_ERROR })
+      return false
+    }
+    const present = BACKUP_SECTIONS.filter(
+      (name: string) => parsed && typeof parsed === "object" && name in (parsed as Record<string, unknown>)
+    )
+    const sections = await pickBackupSections(present)
+    if (!sections) return false
     const summary = (await importAll(parsed, { sections })) as BackupSummary
     toastSuccess(t("settings.toast.backupRestored"), {
       description: `${summary.playlists} playlist(s), ${summary.prefsPlaylists} preference set(s).`,
       duration: options.successDuration ?? 4000,
     })
     await options.onRestored?.(summary)
+    return true
   } catch (error: unknown) {
     log.error(`[${options.logTag}] backup import failed:`, error)
     const message =
@@ -55,7 +66,12 @@ async function applyBackupText(text: string, options: RestoreBackupOptions) {
         ? String((error as { message: unknown }).message)
         : "See console."
     toastError(t("settings.toast.backupRestoreFail"), { description: message })
+    return false
   }
+}
+
+async function applyBackupText(text: string, options: RestoreBackupOptions) {
+  await restoreBackupText(text, options)
 }
 
 /** Wire a "restore from backup" trigger to the platform-appropriate file picker

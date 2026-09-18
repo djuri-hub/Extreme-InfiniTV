@@ -771,6 +771,7 @@
   "backup.restore.confirm": "Pulihkan",
   "backup.section.creds": "Playlist dan login",
   "backup.section.localContent": "Konten playlist lokal dan kustom",
+  "backup.section.localContent.hint": "Memerlukan playlist yang sesuai untuk ada atau dipulihkan.",
   "backup.section.epgOffsets": "Selisih waktu EPG",
   "backup.section.prefs": "Favorit, tonton nanti, progres, dan pengaturan kategori",
   "backup.section.tvDevices": "Perangkat TV yang disandingkan",

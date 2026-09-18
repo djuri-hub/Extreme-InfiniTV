@@ -771,6 +771,7 @@
   "backup.restore.confirm": "استعادة",
   "backup.section.creds": "قوائم التشغيل وبيانات الدخول",
   "backup.section.localContent": "محتوى قوائم التشغيل المحلية والمخصصة",
+  "backup.section.localContent.hint": "يحتاج إلى وجود أو استعادة قوائم التشغيل المطابقة.",
   "backup.section.epgOffsets": "إزاحات وقت دليل البرامج",
   "backup.section.prefs": "المفضلة، وللمشاهدة لاحقاً، والتقدم، وإعدادات الفئات",
   "backup.section.tvDevices": "أجهزة التلفاز المقترنة",

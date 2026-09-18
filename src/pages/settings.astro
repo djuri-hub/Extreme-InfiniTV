@@ -2598,8 +2598,7 @@ const navStructure: NavSection[] = [
     } from "@/scripts/lib/app-settings.js"
     import { validateTmdbKey } from "@/scripts/lib/tmdb.ts"
     import { bindExternalLinks } from "@/scripts/lib/external-link.js"
-    import { bindBackupRestore } from "@/scripts/lib/restore-backup.js"
-    import { pickBackupSections } from "@/scripts/lib/backup-sections-dialog.js"
+    import { bindBackupRestore, restoreBackupText } from "@/scripts/lib/restore-backup.js"
     import {
       saveBackupSnapshot,
       loadBackupSnapshot,
@@ -3397,44 +3396,27 @@ const navStructure: NavSection[] = [
 
     restoreLastBtn?.addEventListener("click", async () => {
       setLoading(restoreLastBtn, true)
+      let text
       try {
-        const text = await loadBackupSnapshot()
-        if (!text) {
-          toastError(t("settings.toast.backupRestoreFail"), {
-            description: t("settings.danger.restoreLastMissing"),
-          })
-          return
-        }
-        let parsed
-        try {
-          parsed = JSON.parse(text)
-        } catch (parseError) {
-          log.warn("[settings:restore-last] backup JSON parse failed:", parseError)
-          toastError(t("settings.toast.backupParseFail"), { description: "Not valid JSON." })
-          return
-        }
-        const { BACKUP_SECTIONS, importAll } = await import("@/scripts/lib/backup.js")
-        const present = BACKUP_SECTIONS.filter(
-          (name) => parsed && typeof parsed === "object" && name in parsed
-        )
-        const sections = await pickBackupSections(present)
-        if (!sections) return
-        const summary = await importAll(parsed, { sections })
-        toastSuccess(t("settings.toast.backupRestored"), {
-          description: `${summary.playlists} playlist(s), ${summary.prefsPlaylists} preference set(s).`,
-          duration: 6000,
-        })
-        flashMsg(backupMsgEl, "Imported.")
-        await renderPlaylists()
-        syncCache()
-      } catch (error) {
-        log.error("[settings:restore-last] backup import failed:", error)
-        toastError(t("settings.toast.backupRestoreFail"), {
-          description: (error && error.message) || "See console.",
-        })
+        text = await loadBackupSnapshot()
       } finally {
         setLoading(restoreLastBtn, false)
       }
+      if (!text) {
+        toastError(t("settings.toast.backupRestoreFail"), {
+          description: t("settings.danger.restoreLastMissing"),
+        })
+        return
+      }
+      await restoreBackupText(text, {
+        logTag: "settings:restore-last",
+        successDuration: 6000,
+        onRestored: async () => {
+          flashMsg(backupMsgEl, "Imported.")
+          await renderPlaylists()
+          syncCache()
+        },
+      })
     })
 
     document.addEventListener("xt:active-changed", () => {

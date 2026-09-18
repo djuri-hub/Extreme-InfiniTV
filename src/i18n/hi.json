@@ -771,6 +771,7 @@
   "backup.restore.confirm": "पुनर्स्थापित करें",
   "backup.section.creds": "प्लेलिस्ट और लॉगिन",
   "backup.section.localContent": "लोकल और कस्टम प्लेलिस्ट की सामग्री",
+  "backup.section.localContent.hint": "इसके लिए संबंधित प्लेलिस्ट का मौजूद होना या पुनर्स्थापित होना जरूरी है।",
   "backup.section.epgOffsets": "EPG समय ऑफ़सेट",
   "backup.section.prefs": "पसंदीदा, बाद में देखें, प्रगति और श्रेणी सेटिंग्स",
   "backup.section.tvDevices": "पेयर किए गए TV डिवाइस",

@@ -771,6 +771,7 @@
   "backup.restore.confirm": "Restaurar",
   "backup.section.creds": "Playlists e logins",
   "backup.section.localContent": "Conteúdo das playlists locais e personalizadas",
+  "backup.section.localContent.hint": "Requer que as playlists correspondentes estejam presentes ou restauradas.",
   "backup.section.epgOffsets": "Deslocamentos de horário da EPG",
   "backup.section.prefs": "Favoritos, assistir depois, progresso e configurações de categorias",
   "backup.section.tvDevices": "Dispositivos de TV emparelhados",

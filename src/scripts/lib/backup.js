@@ -17,6 +17,7 @@ import {
   ensureLoaded as ensurePrefsLoaded,
   snapshotPrefs,
   restorePrefs,
+  mergePrefsSnapshots,
 } from "@/scripts/lib/preferences.js"
 import {
   getUserAgent,
@@ -113,9 +114,10 @@ import { setLocale, getActiveLocale } from "@/scripts/lib/i18n.js"
 import { listTvDevices, saveTvDevice } from "@/scripts/lib/tv-cast.js"
 import { log } from "@/scripts/lib/log.js"
 
-const FORMAT_VERSION = 1
+const FORMAT_VERSION = 2
 const FORMAT_NAME = "extreme-infinitv-backup"
 const LEGACY_FORMAT_NAMES = ["xtream-infinitv-backup"]
+const FORMAT_MARKER_ERROR_MESSAGE = "Invalid backup file: format marker missing or wrong."
 
 export const BACKUP_SECTIONS = Object.freeze([
   "creds",
@@ -186,6 +188,18 @@ function isPlausibleTvDevice(value) {
     typeof value.createdAt === "number" &&
     typeof value.lastSeenAt === "number"
   )
+}
+
+/**
+ * Whether `blob` carries a format/version marker this app's importer accepts
+ * at all (not a version-ceiling check - `importAll` still enforces that).
+ * @param {unknown} blob
+ */
+export function isBackupBlob(blob) {
+  if (!blob || typeof blob !== "object") return false
+  const b = /** @type {any} */ (blob)
+  if (b.format !== FORMAT_NAME && !LEGACY_FORMAT_NAMES.includes(b.format)) return false
+  return typeof b.version === "number"
 }
 
 function isAcceptablePath(value) {
@@ -326,7 +340,7 @@ export async function importAll(blob, options = {}) {
   }
   const b = /** @type {any} */ (blob)
   if (b.format !== FORMAT_NAME && !LEGACY_FORMAT_NAMES.includes(b.format)) {
-    throw new Error("Invalid backup file: format marker missing or wrong.")
+    throw new Error(FORMAT_MARKER_ERROR_MESSAGE)
   }
   if (typeof b.version !== "number" || b.version > FORMAT_VERSION) {
     throw new Error(
@@ -359,6 +373,7 @@ export async function importAll(blob, options = {}) {
   if (sections.has("localContent") && b.localContent && typeof b.localContent === "object") {
     for (const [entryId, value] of Object.entries(b.localContent)) {
       if (typeof entryId !== "string" || !entryId) continue
+      if (!importedEntryIds.has(entryId)) continue
       let text = null
       if (typeof value === "string") text = value
       else if (value && typeof value === "object") text = JSON.stringify(value)
@@ -386,8 +401,19 @@ export async function importAll(blob, options = {}) {
   }
 
   if (sections.has("prefs") && b.prefs && typeof b.prefs === "object") {
-    await restorePrefs(b.prefs)
-    summary.prefsPlaylists = Object.keys(b.prefs).length
+    if (sections.has("creds")) {
+      // Ids are consistent with the file - a full replace is safe.
+      await restorePrefs(b.prefs)
+      summary.prefsPlaylists = Object.keys(b.prefs).length
+    } else {
+      // File ids are per-device UUIDs; only overlay buckets that still exist here.
+      await ensurePrefsLoaded()
+      const merged = mergePrefsSnapshots(snapshotPrefs(), b.prefs, importedEntryIds)
+      await restorePrefs(merged)
+      summary.prefsPlaylists = Object.keys(b.prefs).filter((entryId) =>
+        importedEntryIds.has(entryId)
+      ).length
+    }
   }
 
   if (sections.has("appSettings") && b.appSettings && typeof b.appSettings === "object") {
@@ -653,3 +679,4 @@ export function suggestedFilename() {
 
 export const BACKUP_FORMAT_NAME = FORMAT_NAME
 export const BACKUP_FORMAT_VERSION = FORMAT_VERSION
+export const BACKUP_FORMAT_MARKER_ERROR = FORMAT_MARKER_ERROR_MESSAGE

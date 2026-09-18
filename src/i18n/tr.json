@@ -771,6 +771,7 @@
   "backup.restore.confirm": "Geri yükle",
   "backup.section.creds": "Oynatma listeleri ve girişler",
   "backup.section.localContent": "Yerel ve özel oynatma listesi içerikleri",
+  "backup.section.localContent.hint": "Eşleşen oynatma listelerinin mevcut olması veya geri yüklenmesi gerekir.",
   "backup.section.epgOffsets": "EPG saat kaymaları",
   "backup.section.prefs": "Favoriler, daha sonra izle, ilerleme ve kategori ayarları",
   "backup.section.tvDevices": "Eşleştirilmiş TV cihazları",

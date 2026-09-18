@@ -771,6 +771,7 @@
   "backup.restore.confirm": "恢复",
   "backup.section.creds": "播放列表和登录信息",
   "backup.section.localContent": "本地和自定义播放列表内容",
+  "backup.section.localContent.hint": "需要匹配的播放列表存在或已恢复。",
   "backup.section.epgOffsets": "EPG 时间偏移",
   "backup.section.prefs": "收藏、稍后观看、观看进度和分类设置",
   "backup.section.tvDevices": "已配对的电视设备",

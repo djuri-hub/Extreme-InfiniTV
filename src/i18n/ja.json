@@ -771,6 +771,7 @@
   "backup.restore.confirm": "復元",
   "backup.section.creds": "プレイリストとログイン情報",
   "backup.section.localContent": "ローカルおよびカスタムプレイリストの内容",
+  "backup.section.localContent.hint": "対応するプレイリストが存在するか、復元されている必要があります。",
   "backup.section.epgOffsets": "EPGの時刻オフセット",
   "backup.section.prefs": "お気に入り、後で見る、視聴進捗、カテゴリ設定",
   "backup.section.tvDevices": "ペアリング済みのTVデバイス",

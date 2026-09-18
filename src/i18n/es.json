@@ -771,6 +771,7 @@
   "backup.restore.confirm": "Restaurar",
   "backup.section.creds": "Listas y datos de acceso",
   "backup.section.localContent": "Contenido de listas locales y personalizadas",
+  "backup.section.localContent.hint": "Requiere que las listas correspondientes estén presentes o restauradas.",
   "backup.section.epgOffsets": "Desfases horarios de la guía EPG",
   "backup.section.prefs": "Favoritos, ver más tarde, progreso y ajustes de categorías",
   "backup.section.tvDevices": "Dispositivos de TV vinculados",

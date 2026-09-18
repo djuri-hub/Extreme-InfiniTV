@@ -771,6 +771,7 @@
   "backup.restore.confirm": "Wiederherstellen",
   "backup.section.creds": "Wiedergabelisten und Logins",
   "backup.section.localContent": "Inhalte lokaler und eigener Wiedergabelisten",
+  "backup.section.localContent.hint": "Erfordert, dass die passenden Wiedergabelisten vorhanden oder wiederhergestellt sind.",
   "backup.section.epgOffsets": "EPG-Zeitversätze",
   "backup.section.prefs": "Favoriten, Später ansehen, Fortschritt und Kategorieeinstellungen",
   "backup.section.tvDevices": "Gekoppelte TV-Geräte",

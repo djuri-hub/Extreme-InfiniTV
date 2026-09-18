@@ -2046,3 +2046,14 @@ export async function restorePrefs(snapshot) {
   writeLocalMirror(data)
   await writeDeferredMirror(data)
 }
+
+/** Overlays incoming per-playlist buckets onto `current`, only for ids in `allowedIds`. */
+export function mergePrefsSnapshots(current, incoming, allowedIds) {
+  const merged = { ...(current && typeof current === "object" ? current : {}) }
+  if (incoming && typeof incoming === "object") {
+    for (const [playlistId, bucket] of Object.entries(incoming)) {
+      if (allowedIds.has(playlistId)) merged[playlistId] = bucket
+    }
+  }
+  return merged
+}

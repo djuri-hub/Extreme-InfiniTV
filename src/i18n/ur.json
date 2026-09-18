@@ -771,6 +771,7 @@
   "backup.restore.confirm": "بحال کریں",
   "backup.section.creds": "پلے لسٹس اور لاگ اِن",
   "backup.section.localContent": "لوکل اور کسٹم پلے لسٹ کا مواد",
+  "backup.section.localContent.hint": "اس کے لیے متعلقہ پلے لسٹس کا موجود ہونا یا بحال ہونا ضروری ہے۔",
   "backup.section.epgOffsets": "EPG وقت کی تبدیلیاں",
   "backup.section.prefs": "پسندیدہ، بعد میں دیکھیں، پیش رفت اور زمرے کی ترتیبات",
   "backup.section.tvDevices": "جُڑے ہوئے TV ڈیوائسز",
