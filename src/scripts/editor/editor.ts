@@ -32,6 +32,7 @@ import {
 } from "@/scripts/lib/custom-playlist.ts"
 import { getEntries, entryToCreds, updateEntry } from "@/scripts/lib/creds.js"
 import { ensureLive, buildCustomSourcePools } from "@/scripts/lib/catalog.js"
+import { ensureLoaded as ensurePrefsLoaded, getFavorites, getFavoritesOrdered } from "@/scripts/lib/preferences.js"
 import { serializeM3U } from "@/scripts/lib/m3u-serializer.ts"
 import { buildM3UEntriesForEntry, saveM3UText, sanitizeFilename } from "@/scripts/lib/export-m3u.ts"
 import { probeStreamHead } from "@/scripts/lib/stream-diagnostic.js"
@@ -744,8 +745,11 @@ function hideSourceEmpty(): void {
   sourceEmptyEl?.classList.add("hidden")
 }
 
+const CAT_FAVORITES = "__favorites__"
+
 function populateCategoryFilter(): void {
   if (!sourceCategorySelect) return
+  const previousValue = sourceCategorySelect.value
   const categories = new Set<string>()
   for (const channel of allSourceChannels) {
     if (channel.category) categories.add(channel.category)
@@ -756,12 +760,22 @@ function populateCategoryFilter(): void {
   allOpt.value = ""
   allOpt.textContent = t("list.allCategories")
   sourceCategorySelect.appendChild(allOpt)
+  const favoriteCount =
+    selectedSourceEntryType !== "custom" ? getFavorites(selectedSourceEntryId, "live").size : 0
+  if (favoriteCount > 0) {
+    const favOpt = document.createElement("option")
+    favOpt.value = CAT_FAVORITES
+    favOpt.textContent = `${t("list.specialFavorites")} (${favoriteCount})`
+    sourceCategorySelect.appendChild(favOpt)
+  }
   for (const category of sorted) {
     const opt = document.createElement("option")
     opt.value = category
     opt.textContent = category
     sourceCategorySelect.appendChild(opt)
   }
+  const stillExists = [...sourceCategorySelect.options].some((opt) => opt.value === previousValue)
+  sourceCategorySelect.value = stillExists ? previousValue : ""
 }
 
 function updateSelectedCount(): void {
@@ -813,6 +827,8 @@ async function onSourceChange(): Promise<void> {
     if (selectedSourceEntryId !== requestedSourceEntryId) return
     allSourceChannels = []
   }
+  await ensurePrefsLoaded()
+  if (selectedSourceEntryId !== requestedSourceEntryId) return
   populateCategoryFilter()
   applySourceFilter()
 }
@@ -821,8 +837,14 @@ function applySourceFilter(): void {
   lastClickedIndex = -1
   const tokens = parseSearchQuery(sourceSearchInput?.value || "")
   const category = sourceCategorySelect?.value || ""
+  const isFavoritesCategory = category === CAT_FAVORITES && selectedSourceEntryType !== "custom"
+  const favoriteIds = isFavoritesCategory ? getFavorites(selectedSourceEntryId, "live") : null
   filteredSourceChannels = allSourceChannels.filter((channel) => {
-    if (category && channel.category !== category) return false
+    if (favoriteIds) {
+      if (!favoriteIds.has(channel.id)) return false
+    } else if (category && channel.category !== category) {
+      return false
+    }
     const norm = channel.norm || normalize(`${channel.name || ""} ${channel.category || ""}`)
     return matchesNormQuery(norm, tokens)
   })
@@ -835,6 +857,12 @@ function applySourceFilter(): void {
       })
       return sortMode === "az" ? compared : -compared
     })
+  } else if (isFavoritesCategory) {
+    const orderedFavoriteIds = getFavoritesOrdered(selectedSourceEntryId, "live")
+    const orderIndex = new Map(orderedFavoriteIds.map((id, index) => [id, index]))
+    filteredSourceChannels = [...filteredSourceChannels].sort(
+      (left, right) => (orderIndex.get(left.id) ?? 0) - (orderIndex.get(right.id) ?? 0)
+    )
   }
   renderSourceList()
 }
@@ -986,6 +1014,15 @@ function buildSourceForChannel(sourceEntry: any, channel: any): CustomSource | n
     return { kind: "m3u", entryId: sourceEntry._id, url: channel.url, name: channel.name || "" }
   }
   return null
+}
+
+function wireFavoritesSync(): void {
+  document.addEventListener("xt:favorites-changed", (event) => {
+    const detail = (event as CustomEvent).detail
+    if (!detail || detail.playlistId !== selectedSourceEntryId || detail.kind !== "live") return
+    populateCategoryFilter()
+    applySourceFilter()
+  })
 }
 
 async function addSelectedChannels(): Promise<void> {
@@ -2784,6 +2821,7 @@ async function init(): Promise<void> {
   wirePaneSwitcher()
   wireKeyboardShortcuts()
   wireSelectionEscape()
+  wireFavoritesSync()
   wireNewGroupDialog()
   wireAddUrlDialog()
   wireBulkRenameDialog()
