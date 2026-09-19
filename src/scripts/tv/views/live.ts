@@ -14,6 +14,7 @@ import { toast } from "@/scripts/lib/toast"
 import {
   ensureLoaded as ensurePreferencesLoaded,
   getFavorites,
+  getFavoritesOrdered,
   isFavorite,
   toggleFavorite,
   getHiddenCategories,
@@ -689,6 +690,7 @@ const view: TvView = {
         channelSort === "default" ? state.channels : state.channels.filter((channel) => !channel.isHeader)
       return buildCastChannelGroups(sourceChannels, {
         favorites: getFavorites(state.playlistId, "live"),
+        favoritesOrder: getFavoritesOrdered(state.playlistId, "live"),
         hiddenCategories: getHiddenCategories(state.playlistId, "live"),
         allowedCategories: getAllowedCategories(state.playlistId, "live"),
         categoryMode: getCategoryMode(state.playlistId, "live"),

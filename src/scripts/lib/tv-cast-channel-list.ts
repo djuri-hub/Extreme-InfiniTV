@@ -37,6 +37,8 @@ export interface CastChannelGroup {
 
 export interface BuildCastChannelGroupsOptions {
   favorites?: Set<number> | null
+  /** User-curated favorites order (`getFavoritesOrdered`); ranks the Favorites group ahead of channelSort. */
+  favoritesOrder?: number[] | null
   hiddenCategories?: Set<string> | null
   allowedCategories?: Set<string> | null
   categoryMode?: "hide" | "select"
@@ -65,6 +67,13 @@ function categoryPasses(name: string, options: BuildCastChannelGroupsOptions): b
     return allowed.has(name)
   }
   return !options.hiddenCategories?.has(name)
+}
+
+function orderByRank(channels: CastChannel[], order: number[]): CastChannel[] {
+  const rank = new Map(order.map((id, index) => [id, index]))
+  return channels
+    .slice()
+    .sort((first, second) => (rank.get(first.id) ?? Infinity) - (rank.get(second.id) ?? Infinity))
 }
 
 /**
@@ -97,7 +106,8 @@ export function buildCastChannelGroups(
   const sortChannels = (list: CastChannel[]) => sortChannelsForView(list, options.channelSort || "default")
   const groups: CastChannelGroup[] = []
   if (favorites.length) {
-    groups.push({ key: GROUP_FAVORITES, label: options.favoritesLabel, channels: sortChannels(favorites) })
+    const orderedFavorites = options.favoritesOrder ? orderByRank(favorites, options.favoritesOrder) : favorites
+    groups.push({ key: GROUP_FAVORITES, label: options.favoritesLabel, channels: sortChannels(orderedFavorites) })
   }
   if (visible.length) {
     groups.push({ key: GROUP_ALL, label: options.allLabel, channels: sortChannels(visible) })

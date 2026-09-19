@@ -92,6 +92,7 @@ export function createChannelPickerSource(options: ChannelSourceOptions): Picker
       const preferences = await import("@/scripts/lib/preferences.js")
       const groups = buildCastChannelGroups(channels, {
         favorites: preferences.getFavorites(options.playlistId, "live"),
+        favoritesOrder: preferences.getFavoritesOrdered(options.playlistId, "live"),
         hiddenCategories: preferences.getHiddenCategories(options.playlistId, "live"),
         allowedCategories: preferences.getAllowedCategories(options.playlistId, "live"),
         categoryMode: preferences.getCategoryMode(options.playlistId, "live"),

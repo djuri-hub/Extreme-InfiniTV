@@ -114,10 +114,11 @@
         })
       }
 
-      entries = raw.map((row) => {
+      entries = raw.flatMap((row) => {
         const meta = getFavoriteMeta(row.playlistId, row.kind, row.id)
         const rowLookups = lookups.get(row.playlistId)
         const item = rowLookups?.[row.kind]?.get(Number(row.id))
+        if (item?.isHeader) return []
         // Hidden-channel favorites and unresolved custom-playlist channels both
         // miss the live lookup once the catalog is cached - can't tune either.
         const unavailable = row.kind === "live" && !item && !!rowLookups?.liveCacheAvailable
@@ -138,7 +139,7 @@
             logo: meta?.logo ?? item?.logo ?? null,
           })
         }
-        return {
+        return [{
           playlistId: row.playlistId,
           playlistTitle: titleById.get(row.playlistId) || "Removed playlist",
           kind: row.kind,
@@ -148,7 +149,7 @@
           href: buildHref(row.kind, row.id),
           isCrossPlaylist: row.playlistId !== activePlaylistId,
           unavailable,
-        }
+        }]
       })
     }
 

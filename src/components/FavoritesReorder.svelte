@@ -118,6 +118,9 @@
     return ids.map((id) => {
       const meta = getFavoriteMeta(playlistId, kind, id)
       const item = lookup.get(Number(id))
+      if (item?.isHeader) {
+        return { id: Number(id), name: item.name || meta?.name || "", logo: null, isHeader: true }
+      }
       const name = meta?.name || item?.name || `${kindLabelPlural(kind)} ${id}`
       const logo = meta?.logo ?? item?.logo ?? null
       if (!meta && (item?.name || item?.logo)) {
@@ -407,10 +410,12 @@
                 ondragleave={(ev) => onDragLeave(kind, idx, ev)}
                 ondragend={onDragEnd}
                 ondrop={(ev) => onDrop(kind, idx, ev)}
-                class="reorder-row group flex items-center gap-2 rounded-lg border bg-surface-2 px-2 py-1.5 transition-[opacity,border-color] duration-150"
+                class="reorder-row group flex items-center gap-2 rounded-lg border px-2 py-1.5 transition-[opacity,border-color] duration-150"
                 class:is-dragging={dragState?.kind === kind && dragState?.fromIdx === idx}
                 class:is-drop-target={dragOver?.kind === kind && dragOver?.idx === idx && dragState?.fromIdx !== idx}
                 class:is-settling={justMoved?.kind === kind && justMoved?.ids.has(row.id)}
+                class:bg-surface-2={!row.isHeader}
+                class:border-dashed={!!row.isHeader}
                 class:border-line={!(dragOver?.kind === kind && dragOver?.idx === idx && dragState?.fromIdx !== idx)}
                 class:hover:border-line-soft={!dragState}>
                 <label
@@ -428,12 +433,14 @@
                 <span aria-hidden="true" class="reorder-handle text-fg-3 cursor-grab active:cursor-grabbing px-1 select-none" title={tr("settings.favoritesReorder.dragToReorder")}>
                   <svg xmlns="http://www.w3.org/2000/svg" width="0.875rem" height="0.875rem" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
                 </span>
-                <span class="size-7 shrink-0 rounded-md bg-surface ring-1 ring-line overflow-hidden flex items-center justify-center">
-                  {#if row.logo}
-                    <img use:cachedImg={{ url: row.logo, kind: "logo" }} alt="" loading="lazy" fetchpriority="low" class="h-full w-full object-cover" />
-                  {/if}
-                </span>
-                <span class="flex-1 min-w-0 truncate text-sm text-fg">
+                {#if !row.isHeader}
+                  <span class="size-7 shrink-0 rounded-md bg-surface ring-1 ring-line overflow-hidden flex items-center justify-center">
+                    {#if row.logo}
+                      <img use:cachedImg={{ url: row.logo, kind: "logo" }} alt="" loading="lazy" fetchpriority="low" class="h-full w-full object-cover" />
+                    {/if}
+                  </span>
+                {/if}
+                <span class="flex-1 min-w-0 truncate {row.isHeader ? 'text-2xs font-semibold uppercase tracking-wide text-fg-3' : 'text-sm text-fg'}">
                   {row.name}
                 </span>
                 <span class="shrink-0 flex items-center gap-1">

@@ -620,6 +620,43 @@ function buildHevcBadge() {
   return badge
 }
 
+function buildStarButton(ch) {
+  const fav = activePlaylistId
+    ? isFavorite(activePlaylistId, "live", ch.id)
+    : false
+  const starBtn = document.createElement("button")
+  starBtn.type = "button"
+  starBtn.dataset.role = "star"
+  starBtn.className =
+    "star-btn flex shrink-0 h-11 w-11 items-center justify-center rounded-lg text-base outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent " +
+    (fav
+      ? "text-accent hover:bg-surface-2 focus:bg-surface-2"
+      : "text-fg-3 hover:text-fg hover:bg-surface-2 focus:text-fg focus:bg-surface-2")
+  starBtn.setAttribute(
+    "aria-label",
+    fav
+      ? `Remove ${ch.name || "channel"} from favorites`
+      : `Add ${ch.name || "channel"} to favorites`
+  )
+  starBtn.setAttribute("aria-pressed", String(fav))
+  starBtn.innerHTML = fav ? STAR_FILLED : STAR_OUTLINE
+  starBtn.addEventListener("click", (e) => {
+    e.stopPropagation()
+    if (!activePlaylistId) return
+    toggleFavorite(activePlaylistId, "live", ch.id, {
+      name: ch.name || "",
+      logo: ch.logo || null,
+    })
+    starBtn.classList.remove("star-pulse")
+    void starBtn.offsetWidth
+    starBtn.classList.add("star-pulse")
+  })
+  starBtn.addEventListener("animationend", () => {
+    starBtn.classList.remove("star-pulse")
+  })
+  return starBtn
+}
+
 function renderVirtual() {
   if (!listEl || !viewport) return
   const scrollTop = listEl.scrollTop
@@ -643,13 +680,23 @@ function renderVirtual() {
       const headerRow = document.createElement("div")
       headerRow.dataset.idx = String(i)
       headerRow.style.height = `${ROW_H}px`
-      headerRow.className = "channel-row channel-row--header flex w-full items-center"
+      headerRow.className = "channel-row channel-row--header flex w-full items-center gap-1"
       headerRow.dataset.header = "true"
-      headerRow.setAttribute("role", "presentation")
+
+      const headerBtn = document.createElement("button")
+      headerBtn.type = "button"
+      headerBtn.dataset.role = "play"
+      headerBtn.className =
+        "play-btn flex flex-1 items-center gap-3 rounded-xl px-2.5 py-2 text-left h-full min-w-0 hover:bg-surface-2 focus:bg-surface-2 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent"
+      headerBtn.setAttribute("aria-label", ch.name || "")
       const label = document.createElement("div")
       label.className = "channel-row-header-label truncate"
       label.textContent = ch.name || ""
-      headerRow.appendChild(label)
+      headerBtn.appendChild(label)
+
+      attachChannelContextMenu(headerRow, ch)
+
+      headerRow.append(headerBtn, buildStarButton(ch))
       frag.appendChild(headerRow)
       continue
     }
@@ -737,39 +784,7 @@ function renderVirtual() {
     paintNowSlot(nowSlot, playBtn, ch)
     playBtn.appendChild(wrap)
 
-    const fav = activePlaylistId
-      ? isFavorite(activePlaylistId, "live", ch.id)
-      : false
-    const starBtn = document.createElement("button")
-    starBtn.type = "button"
-    starBtn.dataset.role = "star"
-    starBtn.className =
-      "star-btn flex shrink-0 h-11 w-11 items-center justify-center rounded-lg text-base outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent " +
-      (fav
-        ? "text-accent hover:bg-surface-2 focus:bg-surface-2"
-        : "text-fg-3 hover:text-fg hover:bg-surface-2 focus:text-fg focus:bg-surface-2")
-    starBtn.setAttribute(
-      "aria-label",
-      fav
-        ? `Remove ${ch.name || "channel"} from favorites`
-        : `Add ${ch.name || "channel"} to favorites`
-    )
-    starBtn.setAttribute("aria-pressed", String(fav))
-    starBtn.innerHTML = fav ? STAR_FILLED : STAR_OUTLINE
-    starBtn.addEventListener("click", (e) => {
-      e.stopPropagation()
-      if (!activePlaylistId) return
-      toggleFavorite(activePlaylistId, "live", ch.id, {
-        name: ch.name || "",
-        logo: ch.logo || null,
-      })
-      starBtn.classList.remove("star-pulse")
-      void starBtn.offsetWidth
-      starBtn.classList.add("star-pulse")
-    })
-    starBtn.addEventListener("animationend", () => {
-      starBtn.classList.remove("star-pulse")
-    })
+    const starBtn = buildStarButton(ch)
 
     attachChannelContextMenu(row, ch)
 
@@ -923,70 +938,94 @@ function openChannelMenu(channel, anchor, point) {
   menu.setAttribute("role", "menu")
   menu.setAttribute("aria-label", `Actions for ${channel.name || "channel"}`)
 
-  const playItem = document.createElement("button")
-  playItem.type = "button"
-  playItem.setAttribute("role", "menuitem")
-  playItem.className =
-    MENU_ITEM_CLASS
-  playItem.textContent = t("stream.menu.play")
-  playItem.addEventListener("click", () => {
-    closeChannelMenu()
-    play(channel.id, channel.name)
-  })
-
-  const testItem = document.createElement("button")
-  testItem.type = "button"
-  testItem.setAttribute("role", "menuitem")
-  testItem.className =
-    MENU_ITEM_CLASS
-  testItem.textContent = t("stream.menu.test")
-  testItem.addEventListener("click", () => {
-    closeChannelMenu()
-    openChannelDiagnostic(channel)
-  })
-
-  const copyItem = document.createElement("button")
-  copyItem.type = "button"
-  copyItem.setAttribute("role", "menuitem")
-  copyItem.className =
-    MENU_ITEM_CLASS
-  copyItem.textContent = t("stream.menu.copy")
-  copyItem.addEventListener("click", async () => {
-    const url = buildChannelStreamUrl(channel)
-    closeChannelMenu()
-    if (!url) return
-    try {
-      const { writeClipboardText } = await import("@/scripts/lib/clipboard")
-      await writeClipboardText(url)
-      toast({ title: t("stream.toast.copied"), duration: 2200 })
-    } catch (error) {
-      log.warn("[xt:livetv] copy stream URL failed:", error)
-    }
-  })
-
+  let playItem = null
+  let testItem = null
+  let copyItem = null
   let playOnTvItem = null
-  if (isTauri) {
-    playOnTvItem = document.createElement("button")
-    playOnTvItem.type = "button"
-    playOnTvItem.setAttribute("role", "menuitem")
-    playOnTvItem.className =
+  if (!channel.isHeader) {
+    playItem = document.createElement("button")
+    playItem.type = "button"
+    playItem.setAttribute("role", "menuitem")
+    playItem.className =
       MENU_ITEM_CLASS
-    playOnTvItem.textContent = t("cast.menu.playOnTv")
-    playOnTvItem.addEventListener("click", () => {
+    playItem.textContent = t("stream.menu.play")
+    playItem.addEventListener("click", () => {
       closeChannelMenu()
-      import("@/scripts/lib/tv-cast.ts").then(({ castLiveChannelToTv }) => {
-        castLiveChannelToTv({
-          contentTitle: channel.name || null,
-          title: channel.name || "",
-          logo: channel.logo || undefined,
-          buildSrc: () => buildChannelStreamUrl(channel),
-          drm: streamDrmById.get(channel.id) || undefined,
-          headers: streamHeadersById.get(channel.id) || undefined,
-          preferNativeHls: isNativeHlsFallbackChannel(channel.id),
-          stopLocal: releaseLocalPlaybackForHandoff,
-          restoreLocal: () => { void play(channel.id, channel.name, "user") },
-          liveContext: liveContextForChannelId(channel.id),
-        })()
+      play(channel.id, channel.name)
+    })
+
+    testItem = document.createElement("button")
+    testItem.type = "button"
+    testItem.setAttribute("role", "menuitem")
+    testItem.className =
+      MENU_ITEM_CLASS
+    testItem.textContent = t("stream.menu.test")
+    testItem.addEventListener("click", () => {
+      closeChannelMenu()
+      openChannelDiagnostic(channel)
+    })
+
+    copyItem = document.createElement("button")
+    copyItem.type = "button"
+    copyItem.setAttribute("role", "menuitem")
+    copyItem.className =
+      MENU_ITEM_CLASS
+    copyItem.textContent = t("stream.menu.copy")
+    copyItem.addEventListener("click", async () => {
+      const url = buildChannelStreamUrl(channel)
+      closeChannelMenu()
+      if (!url) return
+      try {
+        const { writeClipboardText } = await import("@/scripts/lib/clipboard")
+        await writeClipboardText(url)
+        toast({ title: t("stream.toast.copied"), duration: 2200 })
+      } catch (error) {
+        log.warn("[xt:livetv] copy stream URL failed:", error)
+      }
+    })
+
+    if (isTauri) {
+      playOnTvItem = document.createElement("button")
+      playOnTvItem.type = "button"
+      playOnTvItem.setAttribute("role", "menuitem")
+      playOnTvItem.className =
+        MENU_ITEM_CLASS
+      playOnTvItem.textContent = t("cast.menu.playOnTv")
+      playOnTvItem.addEventListener("click", () => {
+        closeChannelMenu()
+        import("@/scripts/lib/tv-cast.ts").then(({ castLiveChannelToTv }) => {
+          castLiveChannelToTv({
+            contentTitle: channel.name || null,
+            title: channel.name || "",
+            logo: channel.logo || undefined,
+            buildSrc: () => buildChannelStreamUrl(channel),
+            drm: streamDrmById.get(channel.id) || undefined,
+            headers: streamHeadersById.get(channel.id) || undefined,
+            preferNativeHls: isNativeHlsFallbackChannel(channel.id),
+            stopLocal: releaseLocalPlaybackForHandoff,
+            restoreLocal: () => { void play(channel.id, channel.name, "user") },
+            liveContext: liveContextForChannelId(channel.id),
+          })()
+        })
+      })
+    }
+  }
+
+  let favoriteItem = null
+  if (channel.isHeader && activePlaylistId) {
+    const isFav = isFavorite(activePlaylistId, "live", channel.id)
+    favoriteItem = document.createElement("button")
+    favoriteItem.type = "button"
+    favoriteItem.setAttribute("role", "menuitem")
+    favoriteItem.className = MENU_ITEM_CLASS
+    favoriteItem.textContent = isFav
+      ? t("list.menu.favoriteRemove")
+      : t("list.menu.favoriteAdd")
+    favoriteItem.addEventListener("click", () => {
+      closeChannelMenu()
+      toggleFavorite(activePlaylistId, "live", channel.id, {
+        name: channel.name || "",
+        logo: channel.logo || null,
       })
     })
   }
@@ -1170,11 +1209,12 @@ function openChannelMenu(channel, anchor, point) {
   }
 
   menu.append(
-    playItem,
-    testItem,
-    copyItem,
+    ...(playItem ? [playItem] : []),
+    ...(testItem ? [testItem] : []),
+    ...(copyItem ? [copyItem] : []),
     ...(playOnTvItem ? [playOnTvItem] : []),
     ...(addToCustomItem ? [addToCustomItem] : []),
+    ...(favoriteItem ? [favoriteItem] : []),
     ...(separator ? [separator] : []),
     ...(editItem ? [editItem] : []),
     ...(hideItem ? [hideItem] : []),
@@ -1212,7 +1252,8 @@ function openChannelMenu(channel, anchor, point) {
   window.addEventListener("resize", closeChannelMenu)
   listEl?.addEventListener("scroll", closeChannelMenu, { passive: true })
 
-  testItem.focus({ preventScroll: true })
+  const initialFocus = testItem || menu.querySelector('[role="menuitem"]')
+  initialFocus?.focus({ preventScroll: true })
 }
 
 // Covers every write path: the dialog, the quick hide, and both undo toasts.
