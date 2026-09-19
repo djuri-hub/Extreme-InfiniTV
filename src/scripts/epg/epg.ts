@@ -1082,10 +1082,19 @@ function shouldReduceMotion() {
   return !!reduce || perfMode
 }
 
+// scrollbar-gutter: stable shrinks clientWidth but not scrollWidth, so derive the real max
+function maxScrollLeft() {
+  if (!gridEl) return 0
+  const previous = gridEl.scrollLeft
+  gridEl.scrollLeft = Number.MAX_SAFE_INTEGER
+  const reachableMax = gridEl.scrollLeft
+  gridEl.scrollLeft = previous
+  return reachableMax
+}
+
 function clampScrollLeft(x) {
   if (!gridEl) return Math.max(0, x)
-  const max = Math.max(0, gridEl.scrollWidth - gridEl.clientWidth)
-  return Math.max(0, Math.min(max, x))
+  return Math.max(0, Math.min(maxScrollLeft(), x))
 }
 
 function scrollGridTo(x, smooth) {
@@ -1160,8 +1169,8 @@ earlierBtn?.addEventListener("click", () => {
 
 laterBtn?.addEventListener("click", () => {
   if (!gridEl) return
-  const maxScroll = Math.max(0, gridEl.scrollWidth - gridEl.clientWidth)
-  if (gridEl.scrollLeft >= maxScroll) {
+  const maxScroll = maxScrollLeft()
+  if (gridEl.scrollLeft >= maxScroll - 1) {
     const next = clampDayStart(addDays(viewDayStart, 1))
     if (next === viewDayStart) return
     viewDayStart = next
