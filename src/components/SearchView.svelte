@@ -2,7 +2,7 @@
   // Full search experience. Mounted on /search and used as the search surface 
   import { onMount, tick } from "svelte"
   import { getActiveEntry, loadCreds } from "@/scripts/lib/creds.js"
-  import { normalize } from "@/scripts/lib/text.js"
+  import { normalize, parseSearchQuery, scoreNormMatch } from "@/scripts/lib/text.js"
   import { getCached, hydrate as hydrateCache } from "@/scripts/lib/cache.js"
   import {
     ensureLoaded as ensurePrefsLoaded,
@@ -429,30 +429,16 @@
 
   let scoredAll = $derived.by(() => {
     const counts = { all: 0, live: 0, vod: 0, series: 0, epg: 0 }
-    const normalizedQuery = normalize(queryDebounced.trim())
-    if (!normalizedQuery) return { items: [], counts }
-    const tokens = normalizedQuery.split(" ").filter(Boolean)
+    const tokens = parseSearchQuery(queryDebounced.trim())
     if (!tokens.length) return { items: [], counts }
     const items = allItems
     const itemsLen = items.length
-    const tokensLen = tokens.length
     const matched = []
     const HARD_CAP = 500
     for (let i = 0; i < itemsLen; i++) {
       const item = items[i]
-      const norm = item.norm
-      let score = 0
-      let allMatch = true
-      for (let tokenIndex = 0; tokenIndex < tokensLen; tokenIndex++) {
-        const tok = tokens[tokenIndex]
-        const matchIndex = norm.indexOf(tok)
-        if (matchIndex === -1) {
-          allMatch = false
-          break
-        }
-        score += 100 - (matchIndex > 99 ? 99 : matchIndex) + (norm.startsWith(tok) ? 25 : 0)
-      }
-      if (allMatch) {
+      const score = scoreNormMatch(item.norm, tokens)
+      if (score > 0) {
         counts.all++
         counts[item.kind]++
         if (matched.length < HARD_CAP) matched.push({ item, score })

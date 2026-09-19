@@ -15,7 +15,7 @@ import {
 } from "@/scripts/lib/creds.js"
 import { xtreamApiFetch, resolveStreamUrl, advanceMirror } from "@/scripts/lib/xtream-api.js"
 import { isProviderRejection, shouldRepinMirror, isTransientRejection } from "@/scripts/lib/stream-reject.ts"
-import { normalize, scoreNormMatch } from "@/scripts/lib/text.js"
+import { normalize, parseSearchQuery, scoreNormMatch } from "@/scripts/lib/text.js"
 import { debounce } from "@/scripts/lib/debounce.js"
 import { t, initI18n, getActiveLocale } from "@/scripts/lib/i18n.js"
 import { cachedFetch, getCached, hydrate as hydrateCache, invalidateEntry } from "@/scripts/lib/cache.js"
@@ -1584,8 +1584,7 @@ function renderListStatus(shownCount) {
 
 const applyFilter = () => {
   if (!searchEl || !listStatus) return
-  const qnorm = normalize(searchEl.value || "")
-  const tokens = qnorm.length ? qnorm.split(" ") : []
+  const tokens = parseSearchQuery(searchEl.value)
   // Rows print "Ch 27329 (#1467807)", so digits-only queries also match chno and id.
   const numericQuery = /^\d+$/.test((searchEl.value || "").trim())
     ? (searchEl.value || "").trim()

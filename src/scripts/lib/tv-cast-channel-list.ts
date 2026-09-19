@@ -1,7 +1,7 @@
 // Pure grouping + search model behind the cast remote's channel panel. Mirrors what
 // /livetv shows: same category visibility rules, same category order, same channel sort,
 // plus synthetic Favorites and All channels groups on top.
-import { normalize, scoreNormMatch } from "@/scripts/lib/text.js"
+import { normalize, parseSearchQuery, scoreNormMatch } from "@/scripts/lib/text.js"
 import {
   sortCategoryNames,
   sortChannelsForView,
@@ -113,7 +113,7 @@ export function buildCastChannelGroups(
  * position, and an exact channel-number or id hit outranks any name match.
  */
 export function searchCastChannels(channels: CastChannel[], query: string): CastChannel[] {
-  const tokens = normalize(query).split(" ").filter(Boolean)
+  const tokens = parseSearchQuery(query)
   if (!tokens.length) return []
   const numericQuery = /^\d+$/.test(query.trim()) ? query.trim() : ""
   const scored: Array<{ channel: CastChannel; score: number }> = []

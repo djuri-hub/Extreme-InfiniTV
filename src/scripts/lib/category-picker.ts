@@ -7,7 +7,7 @@
 // pre-extraction versions.
 import { t, LOCALE_EVENT } from "@/scripts/lib/i18n.js"
 import { debounce } from "@/scripts/lib/debounce.js"
-import { normalize, scoreNormMatch } from "@/scripts/lib/text.js"
+import { matchesNormQuery, normalize, parseSearchQuery, scoreNormMatch, type SearchToken } from "@/scripts/lib/text.js"
 import { toast } from "@/scripts/lib/toast.js"
 import { ICON_X } from "@/scripts/lib/icons.js"
 import {
@@ -556,8 +556,7 @@ export function mountCategoryPicker(
 
   const filterCategories = (): void => {
     if (!listEl || !statusEl || !searchEl) return
-    const qnorm = normalize(searchEl.value || "")
-    const tokens = qnorm.length ? qnorm.split(" ") : []
+    const tokens = parseSearchQuery(searchEl.value)
     const mode = categoryMode()
     const allowed = mode === "select" ? allowedSet() : null
     const filterToSelected = mode === "select" && showSelectedOnly
@@ -575,9 +574,7 @@ export function mountCategoryPicker(
       const isRegularRow = !isAllButton && !isPseudo
       if (isRegularRow) totalCount++
       const label = row.dataset.searchLabel || normalize(val || row.textContent || "")
-      const searchMatches =
-        !tokens.length || tokens.every((token) => label.includes(token))
-      let show = searchMatches
+      let show = matchesNormQuery(label, tokens)
       if (show && filterToSelected && isRegularRow) {
         show = !!allowed && allowed.has(val)
       }
@@ -609,7 +606,7 @@ export function mountCategoryPicker(
   }
 
   // Reorder regular category rows by search relevance when a query is active
-  const sortRegularRows = (tokens: string[]): void => {
+  const sortRegularRows = (tokens: SearchToken[]): void => {
     if (!listEl) return
     const rows = Array.from(
       listEl.querySelectorAll<HTMLElement>(

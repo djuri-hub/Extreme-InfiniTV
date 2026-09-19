@@ -35,7 +35,7 @@ import { ensureLive, buildCustomSourcePools } from "@/scripts/lib/catalog.js"
 import { serializeM3U } from "@/scripts/lib/m3u-serializer.ts"
 import { buildM3UEntriesForEntry, saveM3UText, sanitizeFilename } from "@/scripts/lib/export-m3u.ts"
 import { probeStreamHead } from "@/scripts/lib/stream-diagnostic.js"
-import { normalize } from "@/scripts/lib/text.ts"
+import { matchesNormQuery, normalize, parseSearchQuery } from "@/scripts/lib/text.ts"
 import { debounce } from "@/scripts/lib/debounce.ts"
 import { t, tCount } from "@/scripts/lib/i18n.ts"
 import { toastSuccess, toastError, toastWarn } from "@/scripts/lib/toast.ts"
@@ -819,13 +819,12 @@ async function onSourceChange(): Promise<void> {
 
 function applySourceFilter(): void {
   lastClickedIndex = -1
-  const tokens = normalize(sourceSearchInput?.value || "").split(" ").filter(Boolean)
+  const tokens = parseSearchQuery(sourceSearchInput?.value || "")
   const category = sourceCategorySelect?.value || ""
   filteredSourceChannels = allSourceChannels.filter((channel) => {
     if (category && channel.category !== category) return false
-    if (!tokens.length) return true
     const norm = channel.norm || normalize(`${channel.name || ""} ${channel.category || ""}`)
-    return tokens.every((token) => norm.includes(token))
+    return matchesNormQuery(norm, tokens)
   })
   const sortMode = sourceSortSelect?.value || "default"
   if (sortMode === "az" || sortMode === "za") {

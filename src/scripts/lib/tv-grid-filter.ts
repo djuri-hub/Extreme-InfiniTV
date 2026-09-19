@@ -1,6 +1,7 @@
 // Pure filter/sort pipeline + row-window math for the TV movies/series grid.
 
 import { NAME_COLLATOR } from "@/scripts/lib/catalog-mappers.js"
+import { parseSearchQuery, scoreNormMatch } from "@/scripts/lib/text.ts"
 
 export interface GridFilterState {
   category: string | null
@@ -30,17 +31,6 @@ function ratingSortValue(raw: unknown): number {
   return Number.isFinite(value) && value > 0 ? value : 0
 }
 
-function scoreMatch(norm: string, tokens: string[]): number {
-  if (!norm || !tokens.length) return 0
-  let score = 0
-  for (const token of tokens) {
-    const index = norm.indexOf(token)
-    if (index === -1) return 0
-    score += 100 - Math.min(index, 99) + (norm.startsWith(token) ? 25 : 0)
-  }
-  return score
-}
-
 /**
  * Same pipeline as `filterAndSortEntries`, returned as original-array indexes so callers (worker,
  * main thread) can share it without copying entry objects. Works on index numbers throughout: a
@@ -51,8 +41,7 @@ export function filterAndSortIndexes<T extends GridFilterEntry>(
   state: GridFilterState,
   ctx: GridFilterContext<T>
 ): Uint32Array {
-  const queryNorm = ctx.normalize(state.query || "")
-  const tokens = queryNorm.length ? queryNorm.split(" ").filter(Boolean) : []
+  const tokens = parseSearchQuery(state.query)
   const isSorted = state.sort === "added" || state.sort === "rating" || state.sort === "az"
 
   if (!state.category && !state.hideWatched && !tokens.length && !isSorted) {
@@ -74,7 +63,7 @@ export function filterAndSortIndexes<T extends GridFilterEntry>(
     scoreByIndex = new Map()
     let kept = 0
     for (const index of candidates) {
-      const score = scoreMatch(entries[index].norm || "", tokens)
+      const score = scoreNormMatch(entries[index].norm || "", tokens)
       if (score <= 0) continue
       scoreByIndex.set(index, score)
       candidates[kept++] = index
