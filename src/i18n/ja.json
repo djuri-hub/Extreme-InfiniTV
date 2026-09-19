@@ -1483,6 +1483,8 @@
   "settings.favoritesReorder.selectedCount": "{n} 件選択中",
   "settings.favoritesReorder.moveToTop": "先頭へ移動",
   "settings.favoritesReorder.moveToBottom": "末尾へ移動",
+  "settings.favoritesReorder.sortAz": "A-Z順に並べ替え",
+  "settings.favoritesReorder.sortZa": "Z-A順に並べ替え",
   "settings.favoritesReorder.clearSelection": "選択をクリア",
   "settings.favoritesReorder.selectAria": "「{name}」を選択",
   "search.placeholderFull": "チャンネル・映画・シリーズを検索…",

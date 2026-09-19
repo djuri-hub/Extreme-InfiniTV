@@ -1483,6 +1483,8 @@
   "settings.favoritesReorder.selectedCount": "{n} selecionados",
   "settings.favoritesReorder.moveToTop": "Mover para o topo",
   "settings.favoritesReorder.moveToBottom": "Mover para o final",
+  "settings.favoritesReorder.sortAz": "Ordenar de A a Z",
+  "settings.favoritesReorder.sortZa": "Ordenar de Z a A",
   "settings.favoritesReorder.clearSelection": "Limpar seleção",
   "settings.favoritesReorder.selectAria": "Selecionar \"{name}\"",
   "search.placeholderFull": "Buscar canais, filmes, séries…",

@@ -1483,6 +1483,8 @@
   "settings.favoritesReorder.selectedCount": "{n} चयनित",
   "settings.favoritesReorder.moveToTop": "सबसे ऊपर ले जाएँ",
   "settings.favoritesReorder.moveToBottom": "सबसे नीचे ले जाएँ",
+  "settings.favoritesReorder.sortAz": "A-Z क्रमबद्ध करें",
+  "settings.favoritesReorder.sortZa": "Z-A क्रमबद्ध करें",
   "settings.favoritesReorder.clearSelection": "चयन साफ़ करें",
   "settings.favoritesReorder.selectAria": "\"{name}\" चुनें",
   "search.placeholderFull": "चैनल, फ़िल्में, सीरीज़ खोजें…",

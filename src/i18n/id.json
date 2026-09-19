@@ -1483,6 +1483,8 @@
   "settings.favoritesReorder.selectedCount": "{n} dipilih",
   "settings.favoritesReorder.moveToTop": "Pindahkan ke atas",
   "settings.favoritesReorder.moveToBottom": "Pindahkan ke bawah",
+  "settings.favoritesReorder.sortAz": "Urutkan A-Z",
+  "settings.favoritesReorder.sortZa": "Urutkan Z-A",
   "settings.favoritesReorder.clearSelection": "Bersihkan pilihan",
   "settings.favoritesReorder.selectAria": "Pilih \"{name}\"",
   "search.placeholderFull": "Cari saluran, film, serial…",

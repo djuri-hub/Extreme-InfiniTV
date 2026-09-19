@@ -1483,6 +1483,8 @@
   "settings.favoritesReorder.selectedCount": "{n} ausgewählt",
   "settings.favoritesReorder.moveToTop": "Nach ganz oben verschieben",
   "settings.favoritesReorder.moveToBottom": "Nach ganz unten verschieben",
+  "settings.favoritesReorder.sortAz": "A-Z sortieren",
+  "settings.favoritesReorder.sortZa": "Z-A sortieren",
   "settings.favoritesReorder.clearSelection": "Auswahl aufheben",
   "settings.favoritesReorder.selectAria": "„{name}“ auswählen",
   "search.placeholderFull": "Sender, Filme, Serien suchen…",

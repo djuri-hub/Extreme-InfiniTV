@@ -1483,6 +1483,8 @@
   "settings.favoritesReorder.selectedCount": "已选择 {n} 个",
   "settings.favoritesReorder.moveToTop": "移到顶部",
   "settings.favoritesReorder.moveToBottom": "移到底部",
+  "settings.favoritesReorder.sortAz": "按 A-Z 排序",
+  "settings.favoritesReorder.sortZa": "按 Z-A 排序",
   "settings.favoritesReorder.clearSelection": "清空所选",
   "settings.favoritesReorder.selectAria": "选择「{name}」",
   "search.placeholderFull": "搜索频道、电影、剧集…",

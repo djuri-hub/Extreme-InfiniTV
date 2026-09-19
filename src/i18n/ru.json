@@ -1483,6 +1483,8 @@
   "settings.favoritesReorder.selectedCount": "Выбрано: {n}",
   "settings.favoritesReorder.moveToTop": "Переместить в начало",
   "settings.favoritesReorder.moveToBottom": "Переместить в конец",
+  "settings.favoritesReorder.sortAz": "Сортировать А-Я",
+  "settings.favoritesReorder.sortZa": "Сортировать Я-А",
   "settings.favoritesReorder.clearSelection": "Очистить выбор",
   "settings.favoritesReorder.selectAria": "Выбрать «{name}»",
   "search.placeholderFull": "Искать каналы, фильмы, сериалы…",

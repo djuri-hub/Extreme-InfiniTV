@@ -1483,6 +1483,8 @@
   "settings.favoritesReorder.selectedCount": "{n} منتخب",
   "settings.favoritesReorder.moveToTop": "سب سے اوپر منتقل کریں",
   "settings.favoritesReorder.moveToBottom": "سب سے نیچے منتقل کریں",
+  "settings.favoritesReorder.sortAz": "ترتیب A-Z",
+  "settings.favoritesReorder.sortZa": "ترتیب Z-A",
   "settings.favoritesReorder.clearSelection": "انتخاب صاف کریں",
   "settings.favoritesReorder.selectAria": "\"{name}\" منتخب کریں",
   "search.placeholderFull": "چینلز، فلمیں، سیریز تلاش کریں…",

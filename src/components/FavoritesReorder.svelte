@@ -18,6 +18,7 @@
   import { kindLabelPlural, KIND_ORDER } from "@/scripts/lib/kinds.js"
   import { cachedImg } from "@/scripts/lib/img-cache.ts"
   import { t, LOCALE_EVENT } from "@/scripts/lib/i18n.js"
+  import { edgeScrollVelocity } from "@/scripts/lib/drag-autoscroll.ts"
 
   /**
    * Shifts every contiguous run of selected ids one step toward the given
@@ -79,6 +80,27 @@
     return shiftSelectedIds(ids, selectedIds, direction)
   }
 
+  /** Sorts the selected ids by name, writing them back into their own index slots. */
+  function sortSelectedInPlace(ids, selectedIds, nameOf, direction) {
+    const result = [...ids]
+    const indices = []
+    const sortedRun = []
+    for (let index = 0; index < result.length; index++) {
+      if (selectedIds.has(result[index])) {
+        indices.push(index)
+        sortedRun.push(result[index])
+      }
+    }
+    sortedRun.sort((left, right) => {
+      const compared = nameOf(left).localeCompare(nameOf(right), undefined, { sensitivity: "base", numeric: true })
+      return direction === "desc" ? -compared : compared
+    })
+    for (let index = 0; index < indices.length; index++) {
+      result[indices[index]] = sortedRun[index]
+    }
+    return result
+  }
+
   /** @type {string} */
   let activePlaylistId = $state("")
   /** @type {{ live: any[], vod: any[], series: any[] }} */
@@ -96,6 +118,9 @@
   let dragState = $state(null)
   /** @type {{ kind: string, idx: number } | null} */
   let dragOver = $state(null)
+  let scrollEl
+  let scrollVelocity = 0
+  let scrollRafId = null
   /** @type {{ kind: string, ids: Set<number> } | null} */
   let justMoved = $state(null)
   let locale = $state(0)
@@ -244,6 +269,46 @@
     flagSettle(kind, selectedSet)
   }
 
+  function applySort(kind, direction) {
+    if (!activePlaylistId) return
+    const selectedSet = selected[kind]
+    if (!selectedSet.size) return
+    const ids = lists[kind].map((row) => row.id)
+    const namesById = new Map(lists[kind].map((row) => [row.id, row.name]))
+    const nameOf = (id) => namesById.get(id) || ""
+    const next = sortSelectedInPlace(ids, selectedSet, nameOf, direction)
+    if (next.join(",") === ids.join(",")) return
+    setFavoritesOrder(activePlaylistId, kind, next)
+    flagSettle(kind, selectedSet)
+  }
+
+  function stopAutoScroll() {
+    scrollVelocity = 0
+    if (scrollRafId != null) {
+      cancelAnimationFrame(scrollRafId)
+      scrollRafId = null
+    }
+  }
+
+  function stepAutoScroll() {
+    if (!dragState || scrollVelocity === 0 || !scrollEl) {
+      scrollRafId = null
+      return
+    }
+    scrollEl.scrollTop += scrollVelocity
+    scrollRafId = requestAnimationFrame(stepAutoScroll)
+  }
+
+  function onContainerDragOver(ev) {
+    if (!dragState || !scrollEl) return
+    const rect = scrollEl.getBoundingClientRect()
+    scrollVelocity = edgeScrollVelocity(ev.clientY, rect.top, rect.bottom, 56, 14)
+    if (scrollVelocity !== 0) {
+      ev.preventDefault()
+      if (scrollRafId == null) scrollRafId = requestAnimationFrame(stepAutoScroll)
+    }
+  }
+
   function onDragStart(kind, idx, ev) {
     dragState = { kind, fromIdx: idx }
     dragOver = null
@@ -268,9 +333,11 @@
   function onDragEnd() {
     dragState = null
     dragOver = null
+    stopAutoScroll()
   }
   function onDrop(kind, idx, ev) {
     ev.preventDefault()
+    stopAutoScroll()
     if (!dragState || dragState.kind !== kind || !activePlaylistId) {
       dragState = null
       dragOver = null
@@ -317,6 +384,7 @@
       document.addEventListener(eventName, handler)
     }
     return () => {
+      stopAutoScroll()
       for (const [eventName, handler] of Object.entries(handlers)) {
         document.removeEventListener(eventName, handler)
       }
@@ -337,7 +405,10 @@
       {tr("settings.favoritesReorder.emptyState")}
     </div>
   {:else}
-    <div class="flex flex-col gap-3 max-h-[60vh] overflow-y-auto overflow-x-hidden custom-scroll pr-1 -mr-1">
+    <div
+      class="flex flex-col gap-3 max-h-[60vh] overflow-y-auto overflow-x-hidden custom-scroll pr-1 -mr-1"
+      bind:this={scrollEl}
+      ondragover={onContainerDragOver}>
     {#each KIND_ORDER as kind}
       {#if lists[kind].length}
         <div class="flex flex-col gap-1.5">
@@ -361,39 +432,61 @@
                 </span>
               {/if}
             </div>
-            {#if selected[kind].size > 0}
-              <div class="flex items-center gap-2 flex-wrap rounded-lg border border-line bg-surface-2 px-2.5 py-1.5">
+            {#if lists[kind].length >= 2}
+              <div
+                class="flex items-center gap-2 flex-wrap rounded-lg border border-line bg-surface-2 px-2.5 py-1.5 transition-opacity"
+                class:opacity-50={selected[kind].size === 0}
+                class:pointer-events-none={selected[kind].size === 0}>
                 <span class="text-2xs font-medium text-fg-2 tabular-nums shrink-0">
                   {tr("settings.favoritesReorder.selectedCount", { n: selected[kind].size })}
                 </span>
                 <div class="flex items-center gap-1.5 flex-wrap ms-auto">
                   <button
                     type="button"
-                    class="inline-flex items-center min-h-9 pointer-coarse:min-h-11 px-2.5 rounded-full border border-line bg-surface text-2xs font-medium text-fg-2 hover:text-fg hover:border-line-soft hover:bg-surface-3 focus-visible:bg-surface-3 outline-none transition-colors"
+                    class="inline-flex items-center min-h-9 pointer-coarse:min-h-11 px-2.5 rounded-full border border-line bg-surface text-2xs font-medium text-fg-2 hover:text-fg hover:border-line-soft hover:bg-surface-3 focus-visible:bg-surface-3 outline-none transition-colors disabled:opacity-50"
+                    disabled={selected[kind].size === 0}
                     onclick={() => applyBlockMove(kind, "up")}>
                     {tr("settings.favoritesReorder.moveUp")}
                   </button>
                   <button
                     type="button"
-                    class="inline-flex items-center min-h-9 pointer-coarse:min-h-11 px-2.5 rounded-full border border-line bg-surface text-2xs font-medium text-fg-2 hover:text-fg hover:border-line-soft hover:bg-surface-3 focus-visible:bg-surface-3 outline-none transition-colors"
+                    class="inline-flex items-center min-h-9 pointer-coarse:min-h-11 px-2.5 rounded-full border border-line bg-surface text-2xs font-medium text-fg-2 hover:text-fg hover:border-line-soft hover:bg-surface-3 focus-visible:bg-surface-3 outline-none transition-colors disabled:opacity-50"
+                    disabled={selected[kind].size === 0}
                     onclick={() => applyBlockMove(kind, "down")}>
                     {tr("settings.favoritesReorder.moveDown")}
                   </button>
                   <button
                     type="button"
-                    class="inline-flex items-center min-h-9 pointer-coarse:min-h-11 px-2.5 rounded-full border border-line bg-surface text-2xs font-medium text-fg-2 hover:text-fg hover:border-line-soft hover:bg-surface-3 focus-visible:bg-surface-3 outline-none transition-colors"
+                    class="inline-flex items-center min-h-9 pointer-coarse:min-h-11 px-2.5 rounded-full border border-line bg-surface text-2xs font-medium text-fg-2 hover:text-fg hover:border-line-soft hover:bg-surface-3 focus-visible:bg-surface-3 outline-none transition-colors disabled:opacity-50"
+                    disabled={selected[kind].size === 0}
                     onclick={() => applyBlockMove(kind, "top")}>
                     {tr("settings.favoritesReorder.moveToTop")}
                   </button>
                   <button
                     type="button"
-                    class="inline-flex items-center min-h-9 pointer-coarse:min-h-11 px-2.5 rounded-full border border-line bg-surface text-2xs font-medium text-fg-2 hover:text-fg hover:border-line-soft hover:bg-surface-3 focus-visible:bg-surface-3 outline-none transition-colors"
+                    class="inline-flex items-center min-h-9 pointer-coarse:min-h-11 px-2.5 rounded-full border border-line bg-surface text-2xs font-medium text-fg-2 hover:text-fg hover:border-line-soft hover:bg-surface-3 focus-visible:bg-surface-3 outline-none transition-colors disabled:opacity-50"
+                    disabled={selected[kind].size === 0}
                     onclick={() => applyBlockMove(kind, "bottom")}>
                     {tr("settings.favoritesReorder.moveToBottom")}
                   </button>
                   <button
                     type="button"
-                    class="inline-flex items-center min-h-9 pointer-coarse:min-h-11 px-2.5 rounded-full border border-line bg-surface text-2xs font-medium text-fg-2 hover:text-fg hover:border-line-soft hover:bg-surface-3 focus-visible:bg-surface-3 outline-none transition-colors"
+                    class="inline-flex items-center min-h-9 pointer-coarse:min-h-11 px-2.5 rounded-full border border-line bg-surface text-2xs font-medium text-fg-2 hover:text-fg hover:border-line-soft hover:bg-surface-3 focus-visible:bg-surface-3 outline-none transition-colors disabled:opacity-50"
+                    disabled={selected[kind].size === 0}
+                    onclick={() => applySort(kind, "asc")}>
+                    {tr("settings.favoritesReorder.sortAz")}
+                  </button>
+                  <button
+                    type="button"
+                    class="inline-flex items-center min-h-9 pointer-coarse:min-h-11 px-2.5 rounded-full border border-line bg-surface text-2xs font-medium text-fg-2 hover:text-fg hover:border-line-soft hover:bg-surface-3 focus-visible:bg-surface-3 outline-none transition-colors disabled:opacity-50"
+                    disabled={selected[kind].size === 0}
+                    onclick={() => applySort(kind, "desc")}>
+                    {tr("settings.favoritesReorder.sortZa")}
+                  </button>
+                  <button
+                    type="button"
+                    class="inline-flex items-center min-h-9 pointer-coarse:min-h-11 px-2.5 rounded-full border border-line bg-surface text-2xs font-medium text-fg-2 hover:text-fg hover:border-line-soft hover:bg-surface-3 focus-visible:bg-surface-3 outline-none transition-colors disabled:opacity-50"
+                    disabled={selected[kind].size === 0}
                     onclick={() => deselectAll(kind)}>
                     {tr("settings.favoritesReorder.clearSelection")}
                   </button>

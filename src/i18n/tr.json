@@ -1483,6 +1483,8 @@
   "settings.favoritesReorder.selectedCount": "{n} seçildi",
   "settings.favoritesReorder.moveToTop": "En üste taşı",
   "settings.favoritesReorder.moveToBottom": "En alta taşı",
+  "settings.favoritesReorder.sortAz": "A-Z sırala",
+  "settings.favoritesReorder.sortZa": "Z-A sırala",
   "settings.favoritesReorder.clearSelection": "Seçimi temizle",
   "settings.favoritesReorder.selectAria": "\"{name}\" öğesini seç",
   "search.placeholderFull": "Kanallarda, filmlerde, dizilerde ara…",

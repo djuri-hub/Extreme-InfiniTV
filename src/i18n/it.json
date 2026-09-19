@@ -1483,6 +1483,8 @@
   "settings.favoritesReorder.selectedCount": "{n} selezionati",
   "settings.favoritesReorder.moveToTop": "Sposta in cima",
   "settings.favoritesReorder.moveToBottom": "Sposta in fondo",
+  "settings.favoritesReorder.sortAz": "Ordina A-Z",
+  "settings.favoritesReorder.sortZa": "Ordina Z-A",
   "settings.favoritesReorder.clearSelection": "Cancella selezione",
   "settings.favoritesReorder.selectAria": "Seleziona \"{name}\"",
   "search.placeholderFull": "Cerca canali, film, serie…",

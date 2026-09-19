@@ -1483,6 +1483,8 @@
   "settings.favoritesReorder.selectedCount": "Zaznaczono {n}",
   "settings.favoritesReorder.moveToTop": "Przenieś na górę",
   "settings.favoritesReorder.moveToBottom": "Przenieś na dół",
+  "settings.favoritesReorder.sortAz": "Sortuj A-Z",
+  "settings.favoritesReorder.sortZa": "Sortuj Z-A",
   "settings.favoritesReorder.clearSelection": "Wyczyść zaznaczenie",
   "settings.favoritesReorder.selectAria": "Zaznacz \"{name}\"",
   "search.placeholderFull": "Szukaj kanałów, filmów, seriali…",

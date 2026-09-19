@@ -1483,6 +1483,8 @@
   "settings.favoritesReorder.selectedCount": "{n} geselecteerd",
   "settings.favoritesReorder.moveToTop": "Naar boven verplaatsen",
   "settings.favoritesReorder.moveToBottom": "Naar beneden verplaatsen",
+  "settings.favoritesReorder.sortAz": "Sorteer A-Z",
+  "settings.favoritesReorder.sortZa": "Sorteer Z-A",
   "settings.favoritesReorder.clearSelection": "Selectie wissen",
   "settings.favoritesReorder.selectAria": "\"{name}\" selecteren",
   "search.placeholderFull": "Zoek kanalen, films, series…",
