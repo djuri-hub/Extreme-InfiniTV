@@ -24,6 +24,7 @@ import {
   isFavorite,
   toggleFavorite,
   getFavoritesOrdered,
+  moveFavorite,
   pushRecent,
   getRecents,
   getViewSort,
@@ -1097,55 +1098,74 @@ function openChannelMenu(channel, anchor, point) {
     separator.className = "my-1 h-px bg-line"
   }
 
-  // Curates order/name/logo/number/tvg-id straight from the channel row.
+  // Move reorders favorites order, custom-doc order, or (Recents) nothing.
   let moveUpItem = null
   let moveDownItem = null
   let editCustomItem = null
   let deleteCustomItem = null
   let customSeparator = null
-  if (isCustomHost(creds.host)) {
-    const sortMode = activePlaylistId ? getViewSort(activePlaylistId, "live") : "default"
-    if (sortMode === "default") {
-      // Displayed order only matches doc order with no search filter narrowing the list.
-      const searchActive = !!(searchEl?.value || "").trim()
-      const groupChannelIds = searchActive
-        ? []
-        : filtered.filter((row) => row.category === channel.category).map((row) => row.id)
-      const groupPosition = groupChannelIds.indexOf(channel.id)
-      const isFirstInGroup = groupPosition === 0
-      const isLastInGroup = groupPosition >= 0 && groupPosition === groupChannelIds.length - 1
 
-      if (searchActive || !isFirstInGroup) {
-        moveUpItem = document.createElement("button")
-        moveUpItem.type = "button"
-        moveUpItem.setAttribute("role", "menuitem")
-        moveUpItem.className = MENU_ITEM_CLASS
-        moveUpItem.textContent = t("stream.menu.moveUp")
-        moveUpItem.addEventListener("click", () => {
-          closeChannelMenu()
-          void mutateCustomChannel(channel.id, async (doc, docChannel) => {
-            const { moveChannelWithinGroup } = await import("@/scripts/lib/custom-playlist.ts")
-            return moveChannelWithinGroup(doc, docChannel.key, "up")
-          })
-        })
+  const activeCat = picker.getActiveCat()
+  const sortMode = activePlaylistId ? getViewSort(activePlaylistId, "live") : "default"
+  const searchActive = !!(searchEl?.value || "").trim()
+
+  const buildMoveItem = (label, onMove) => {
+    const item = document.createElement("button")
+    item.type = "button"
+    item.setAttribute("role", "menuitem")
+    item.className = MENU_ITEM_CLASS
+    item.textContent = label
+    item.addEventListener("click", () => {
+      closeChannelMenu()
+      onMove()
+    })
+    return item
+  }
+
+  if (activeCat === CAT_FAVORITES && activePlaylistId) {
+    if (sortMode === "default" && !searchActive) {
+      const orderedFavIds = getFavoritesOrdered(activePlaylistId, "live")
+      const favPosition = orderedFavIds.indexOf(channel.id)
+      if (favPosition > 0) {
+        moveUpItem = buildMoveItem(t("stream.menu.moveUp"), () =>
+          moveFavorite(activePlaylistId, "live", channel.id, -1)
+        )
       }
-
-      if (searchActive || !isLastInGroup) {
-        moveDownItem = document.createElement("button")
-        moveDownItem.type = "button"
-        moveDownItem.setAttribute("role", "menuitem")
-        moveDownItem.className = MENU_ITEM_CLASS
-        moveDownItem.textContent = t("stream.menu.moveDown")
-        moveDownItem.addEventListener("click", () => {
-          closeChannelMenu()
-          void mutateCustomChannel(channel.id, async (doc, docChannel) => {
-            const { moveChannelWithinGroup } = await import("@/scripts/lib/custom-playlist.ts")
-            return moveChannelWithinGroup(doc, docChannel.key, "down")
-          })
-        })
+      if (favPosition >= 0 && favPosition < orderedFavIds.length - 1) {
+        moveDownItem = buildMoveItem(t("stream.menu.moveDown"), () =>
+          moveFavorite(activePlaylistId, "live", channel.id, 1)
+        )
       }
     }
+  } else if (activeCat !== CAT_RECENTS && isCustomHost(creds.host) && sortMode === "default") {
+    // Displayed order only matches doc order with no search filter narrowing the list.
+    const groupChannelIds = searchActive
+      ? []
+      : filtered.filter((row) => row.category === channel.category).map((row) => row.id)
+    const groupPosition = groupChannelIds.indexOf(channel.id)
+    const isFirstInGroup = groupPosition === 0
+    const isLastInGroup = groupPosition >= 0 && groupPosition === groupChannelIds.length - 1
 
+    if (searchActive || !isFirstInGroup) {
+      moveUpItem = buildMoveItem(t("stream.menu.moveUp"), () =>
+        void mutateCustomChannel(channel.id, async (doc, docChannel) => {
+          const { moveChannelWithinGroup } = await import("@/scripts/lib/custom-playlist.ts")
+          return moveChannelWithinGroup(doc, docChannel.key, "up")
+        })
+      )
+    }
+
+    if (searchActive || !isLastInGroup) {
+      moveDownItem = buildMoveItem(t("stream.menu.moveDown"), () =>
+        void mutateCustomChannel(channel.id, async (doc, docChannel) => {
+          const { moveChannelWithinGroup } = await import("@/scripts/lib/custom-playlist.ts")
+          return moveChannelWithinGroup(doc, docChannel.key, "down")
+        })
+      )
+    }
+  }
+
+  if (isCustomHost(creds.host)) {
     editCustomItem = document.createElement("button")
     editCustomItem.type = "button"
     editCustomItem.setAttribute("role", "menuitem")
@@ -1202,7 +1222,9 @@ function openChannelMenu(channel, anchor, point) {
         )
       })()
     })
+  }
 
+  if (moveUpItem || moveDownItem || editCustomItem || deleteCustomItem) {
     customSeparator = document.createElement("div")
     customSeparator.setAttribute("role", "separator")
     customSeparator.className = "my-1 h-px bg-line"
