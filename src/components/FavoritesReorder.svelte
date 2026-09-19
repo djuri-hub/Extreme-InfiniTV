@@ -420,7 +420,10 @@
                     type="checkbox"
                     class="size-4 accent-accent outline-none focus-visible:ring-2 focus-visible:ring-accent rounded"
                     checked={selected[kind].has(row.id)}
-                    onclick={(ev) => { ev.preventDefault(); toggleSelection(kind, idx, ev.shiftKey) }} />
+                    onclick={(ev) => {
+                      toggleSelection(kind, idx, ev.shiftKey)
+                      ev.currentTarget.checked = selected[kind].has(row.id)
+                    }} />
                 </label>
                 <span aria-hidden="true" class="reorder-handle text-fg-3 cursor-grab active:cursor-grabbing px-1 select-none" title={tr("settings.favoritesReorder.dragToReorder")}>
                   <svg xmlns="http://www.w3.org/2000/svg" width="0.875rem" height="0.875rem" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
