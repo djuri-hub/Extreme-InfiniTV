@@ -88,6 +88,9 @@ importers:
       mpegts.js:
         specifier: 1.8.0
         version: 1.8.0(patch_hash=2ea2f6966ba08084f38602edaf3dd8b7735c3bdd68a02e8674b737077463c026)
+      p2p-media-loader-hlsjs:
+        specifier: ^4.0.0
+        version: 4.0.0
       shaka-player:
         specifier: ^5.2.8
         version: 5.2.8
@@ -1270,6 +1273,9 @@ packages:
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
 
+  '@types/debug@4.1.13':
+    resolution: {integrity: sha512-KSVgmQmzMwPlmtljOomayoR89W4FynCAi3E8PPs7vmDVPe84hT+vGPKkJfThkmXs0x0jAaa9U8uW8bbfyS2fWw==}
+
   '@types/deep-eql@4.0.2':
     resolution: {integrity: sha512-c9h9dVVMigMPc4bwTvC5dxqtqJZwQPePsWjPlpSOnojbor6pGqdk541lfA7AqFQr5pB1BRdq0juY9db81BwyFw==}
 
@@ -1290,6 +1296,9 @@ packages:
 
   '@types/mdast@4.0.4':
     resolution: {integrity: sha512-kGaNbPh1k7AFzgpud/gMdvIm5xuECykRR+JnWKQno9TAXVa6WIVCGTPvYGekIDL4uwCZQSYbUxNBSb1aUo79oA==}
+
+  '@types/ms@2.1.0':
+    resolution: {integrity: sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA==}
 
   '@types/nlcst@2.0.3':
     resolution: {integrity: sha512-vSYNSDe6Ix3q+6Z7ri9lyWqgGhJTmzRjZRqyq15N0Z/1/UnVsno9G/N40NBijoYx2seFDIl0+B2mgAb9mezUCA==}
@@ -2360,6 +2369,12 @@ packages:
   p-timeout@7.0.1:
     resolution: {integrity: sha512-AxTM2wDGORHGEkPCt8yqxOTMgpfbEHqF51f/5fJCmwFC3C/zNcGT63SymH2ttOAaiIws2zVg4+izQCjrakcwHg==}
     engines: {node: '>=20'}
+
+  p2p-media-loader-core@4.0.0:
+    resolution: {integrity: sha512-aG+FcS3INFrqA/R2r+9mk1jdr1WOydstY1YYITirrsZbiLOA2AOrhjtI+kBB+nQufKY7SFOWraWTGJiKT9/9zQ==}
+
+  p2p-media-loader-hlsjs@4.0.0:
+    resolution: {integrity: sha512-MpHwxMyZm2ZzGH4tUt4cUDb2Kt8oOrAgqEBTHP4vYNnRAwyR/x07ijkCeyRqs3e0RpNKrEVBJdYpNoDRFZu76g==}
 
   package-manager-detector@1.8.0:
     resolution: {integrity: sha512-yQA4H19AmPEoMUeavPMDIe1higySl/gH/yaQrkT/s07Qp+7pp2hYz30N3z2l5BkjVkF9Ow6o0wjJamm2y7Sn0A==}
@@ -3933,6 +3948,10 @@ snapshots:
       '@types/deep-eql': 4.0.2
       assertion-error: 2.0.1
 
+  '@types/debug@4.1.13':
+    dependencies:
+      '@types/ms': 2.1.0
+
   '@types/deep-eql@4.0.2': {}
 
   '@types/esrecurse@4.3.1': {}
@@ -3952,6 +3971,8 @@ snapshots:
   '@types/mdast@4.0.4':
     dependencies:
       '@types/unist': 3.0.3
+
+  '@types/ms@2.1.0': {}
 
   '@types/nlcst@2.0.3':
     dependencies:
@@ -5155,6 +5176,19 @@ snapshots:
       p-timeout: 7.0.1
 
   p-timeout@7.0.1: {}
+
+  p2p-media-loader-core@4.0.0:
+    dependencies:
+      '@types/debug': 4.1.13
+      debug: 4.4.3
+    transitivePeerDependencies:
+      - supports-color
+
+  p2p-media-loader-hlsjs@4.0.0:
+    dependencies:
+      p2p-media-loader-core: 4.0.0
+    transitivePeerDependencies:
+      - supports-color
 
   package-manager-detector@1.8.0: {}
 
