@@ -21,6 +21,8 @@ import {
   attachArtplayerAudioControl,
   type AudioTrackSource,
 } from "@/scripts/lib/audio-tracks.js"
+import { HlsJsP2PEngine } from "p2p-media-loader-hlsjs"
+import { p2pConfigFor, swarmIdFor } from "@/scripts/lib/p2p"
 import {
   getPlayerBackend,
   getPlayerPath,
@@ -1217,11 +1219,24 @@ function attachHlsToVideo(
     return
   }
   log.info(`[xt:player] hls transport=hls.js loader=${isTauri ? "tauri-http" : "xhr"}`)
+  // ---- P2P DELIVERY (see scripts/lib/p2p.ts) -------------------------------------------
+  // Off for a channel that needs per-request headers: the peer path cannot carry them, and
+  // such a provider's segment addresses are per-session anyway, so there is nothing to share.
+  const p2p = authorization ? null : p2pConfigFor(cleanUrl)
+  if (p2p) log.info(`[xt:player] hls transport=hls.js P2P swarm=${swarmIdFor(cleanUrl)}`)
+  // With the mixin active the fragment and playlist loaders are replaced, and inside hls.js's
+  // worker those replacements do not apply — the player then dies with zero fragments loaded
+  // (measured on this deployment). The worker therefore stays off whenever the mesh is on.
+  const HlsClass = (p2p ? HlsJsP2PEngine.injectMixin(Hls) : Hls) as typeof Hls
   // Off by default: a manifest's DEFAULT=YES rendition would otherwise render unasked.
-  const hlsConfig: Record<string, unknown> = { enableWorker: true, subtitleDisplay: false }
-  if (isTauri) {
+  const hlsConfig: Record<string, unknown> = {
+    enableWorker: !p2p,
+    subtitleDisplay: false,
+    ...(p2p ?? {}),
+  }
+  if (!p2p && isTauri) {
     hlsConfig.loader = createTauriHlsLoaderClass(authorization, authorizedOrigin)
-  } else if (authorization) {
+  } else if (!p2p && authorization) {
     // hls.js calls xhrSetup before its own open(); opening here lets us set
     // the Authorization header, and hls.js skips its open when already OPENED.
     // Skip cross-origin requests entirely so credentials stay on their host.
@@ -1231,7 +1246,7 @@ function attachHlsToVideo(
       xhr.setRequestHeader("Authorization", authorization)
     }
   }
-  const hls = new Hls(hlsConfig)
+  const hls = new HlsClass(hlsConfig)
   let netRecover = 0
   let mediaRecover = 0
   let parseErrors = 0
