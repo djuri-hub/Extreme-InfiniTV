@@ -30,6 +30,37 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 		</header>
 
 
+		<!-- Star sign-in: pairing code + account. This deployment's own player: the operator
+		     creates the viewer in the Aliran panel (username, password, package, expiry), the
+		     pairing code says WHICH service to ask, and the origin answers with that account's
+		     playlist. Deliberately placed above the generic methods ? it is the normal path
+		     for this build. -->
+		<section id="star-card" class="rounded-xl border border-line bg-surface mb-10 p-5">
+			<h2 class="text-sm font-semibold tracking-wider uppercase text-fg-3">Star nalog</h2>
+			<p class="mt-1 mb-4 text-xs leading-relaxed text-fg-3">
+				Upi?i paring kod svog servisa, pa korisni?ko ime i lozinku.
+			</p>
+			<div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+				<label class="flex flex-col gap-2">
+					<span class="text-xs font-semibold tracking-wider uppercase text-fg-3">Paring kod</span>
+					<input id="star-code" type="text" autocomplete="off" spellcheck="false"
+						placeholder="XXXX-XXXX-XXXX" class="field-input" />
+				</label>
+				<label class="flex flex-col gap-2">
+					<span class="text-xs font-semibold tracking-wider uppercase text-fg-3">Korisnik</span>
+					<input id="star-user" type="text" autocomplete="off" spellcheck="false" class="field-input" />
+				</label>
+				<label class="flex flex-col gap-2">
+					<span class="text-xs font-semibold tracking-wider uppercase text-fg-3">Lozinka</span>
+					<input id="star-pass" type="password" autocomplete="current-password" class="field-input" />
+				</label>
+			</div>
+			<div class="mt-4 flex items-center gap-3">
+				<button id="star-signin" type="button" class="btn-primary">Prijavi se</button>
+				<span id="star-msg" class="text-xs leading-relaxed text-fg-3"></span>
+			</div>
+		</section>
+
 		<!-- Method picker: clean segmented control -->
 		<div
 			role="tablist"
@@ -594,6 +625,10 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 	const userEl = $("username");
 	const passEl = $("password");
 	const m3uEl = $("m3uUrl");
+
+	// Star sign-in talks to our own origin, never to the panel directly: the origin holds
+	// the shared secret and is the only thing that can vouch for an account.
+	const STAR_ORIGIN = "https://hardrockradio.net:8443";
 	const addFromWebsiteBtn = $("addFromWebsiteBtn");
 	const localPickBtn = $("localPickBtn");
 	const localFileInput = $("localFileInput");
@@ -1752,6 +1787,94 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 		}
 	});
 
+	// ---- Star sign-in: pairing code + account, answered with a per-account playlist ----
+	async function starSignIn() {
+		const btn = $("star-signin");
+		const msg = $("star-msg");
+		const say = (text) => {
+			if (msg) msg.textContent = text;
+		};
+		if (!btn || !msg) return;
+		const code = ($("star-code")?.value || "").trim();
+		const username = ($("star-user")?.value || "").trim();
+		const password = $("star-pass")?.value || "";
+		if (!code || !username || !password) {
+			say("Upi?i kod, korisnika i lozinku.");
+			return;
+		}
+		btn.disabled = true;
+		say("Provjeravam nalog?");
+		try {
+			const res = await fetch(STAR_ORIGIN + "/login", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ code, username, password }),
+			});
+			const data = await res.json().catch(() => null);
+			if (!res.ok || !data || !data.playlist) {
+				const reason = (data && data.error) || "greska";
+				say(
+					reason === "bad-code"
+						? "Paring kod nije ta?an."
+						: reason === "expired"
+							? "Nalog je istekao."
+							: reason === "disabled"
+								? "Nalog je isklju?en."
+								: reason === "invalid credentials"
+									? "Pogre?an korisnik ili lozinka."
+									: "Prijava nije pro?la (" + reason + ")."
+				);
+				return;
+			}
+			const saved = await addEntry({
+				type: "m3u",
+				title: username,
+				emoji: "",
+				accent: "",
+				url: data.playlist,
+				epgUrl: "",
+				additionalEpgUrls: [],
+			});
+			try {
+				localStorage.setItem("xt_star_user", username);
+			} catch {}
+			say("Prijava uspje?na ? " + (data.channels || 0) + " kanala.");
+			if (saved && saved._id) {
+				try {
+					const { warmupActive } = await import("@/scripts/lib/catalog.js");
+					await warmupActive(saved._id, { force: true });
+				} catch (err) {
+					log.warn("[xt:login] star warmup failed:", err);
+				}
+			}
+			location.href = "/livetv";
+		} catch (err) {
+			log.warn("[xt:login] star sign-in failed:", err);
+			say("Server nije dostupan ? provjeri internet.");
+		} finally {
+			btn.disabled = false;
+		}
+	}
+
+	$("star-signin")?.addEventListener("click", () => {
+		starSignIn();
+	});
+	$("star-pass")?.addEventListener("keydown", (event) => {
+		if (event.key === "Enter") {
+			event.preventDefault();
+			starSignIn();
+		}
+	});
+	$("star-code")?.addEventListener("input", (event) => {
+		const el = event.target;
+		const clean = String(el.value).toUpperCase().replace(/[^0-9A-Z]/g, "").slice(0, 12);
+		el.value = clean.replace(/(.{4})(?=.)/g, "$1-");
+	});
+	try {
+		const lastUser = localStorage.getItem("xt_star_user");
+		if (lastUser && $("star-user")) $("star-user").value = lastUser;
+	} catch {}
+
 	// ---- Boot: prefill for editing, or default to "add Xtream" ----
 	if (editingId) {
 		const entries = await getEntries();
@@ -1764,6 +1887,7 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 		pageSubtitle.textContent = t("login.subtitle.edit", { title: editing.title });
 		saveBtn.removeAttribute("data-i18n");
 		saveBtn.textContent = t("login.action.saveEdit");
+		$("star-card")?.classList.add("hidden");
 		tabXtream.disabled = editing.type !== "xtream";
 		tabM3u.disabled = editing.type !== "m3u";
 		tabLocal.disabled = editing.type !== "local-m3u";
