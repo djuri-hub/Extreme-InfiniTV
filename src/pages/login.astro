@@ -629,6 +629,37 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 	// Star sign-in talks to our own origin, never to the panel directly: the origin holds
 	// the shared secret and is the only thing that can vouch for an account.
 	const STAR_ORIGIN = "https://hardrockradio.net:8443";
+
+	// A stable id for this installation, so the panel lists the app as a device of the account
+	// (and the account's device cap applies to it) exactly as it does for the Aliran client.
+	function starDeviceId() {
+		try {
+			let id = localStorage.getItem("xt_star_device");
+			if (!id) {
+				id = "app-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+				localStorage.setItem("xt_star_device", id);
+			}
+			return id;
+		} catch {
+			return "app-unknown";
+		}
+	}
+
+	function starDeviceLabel() {
+		const ua = navigator.userAgent || "";
+		const platform = /Android/i.test(ua)
+			? /TV|Braille|AFT|Box/i.test(ua)
+				? "Android TV"
+				: "Android"
+			: /Windows/i.test(ua)
+				? "Windows"
+				: /Macintosh/i.test(ua)
+					? "macOS"
+					: /Linux/i.test(ua)
+						? "Linux"
+						: "Web";
+		return "Star Xtream \u00b7 " + platform;
+	}
 	const addFromWebsiteBtn = $("addFromWebsiteBtn");
 	const localPickBtn = $("localPickBtn");
 	const localFileInput = $("localFileInput");
@@ -1808,7 +1839,13 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 			const res = await fetch(STAR_ORIGIN + "/login", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ code, username, password }),
+				body: JSON.stringify({
+					code,
+					username,
+					password,
+					deviceId: starDeviceId(),
+					label: starDeviceLabel(),
+				}),
 			});
 			const data = await res.json().catch(() => null);
 			if (!res.ok || !data || !data.playlist) {
