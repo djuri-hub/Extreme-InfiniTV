@@ -288,6 +288,28 @@ function storedValue(key: string): string | null {
   }
 }
 
+function storeValue(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    /* a private mode without storage simply reports no identity */
+  }
+}
+
+/** The id this installation is known by. Created on first use, so an app that signed in before
+ *  the id existed still registers itself with the panel instead of reporting `null`. */
+function deviceId(): string | null {
+  const existing = storedValue("xt_star_device")
+  if (existing) return existing
+  try {
+    const id = "app-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
+    storeValue("xt_star_device", id)
+    return id
+  } catch {
+    return null
+  }
+}
+
 /** Stop the picture when the panel closes this account or this device.
  *  The reply to the ten-second report is the operator's switch; without acting on it a
  *  disabled viewer would keep watching until the playlist token expired a day later. */
@@ -301,6 +323,11 @@ function stopPlayback(reason: string): void {
     window.dispatchEvent(new CustomEvent("xt:blocked", { detail: { reason } }))
   } catch {
     /* an environment without CustomEvent falls back to pausing below */
+  }
+  // Stop reporting: a killed device must not re-register itself on the next beat.
+  if (publishTimer !== null) {
+    window.clearInterval(publishTimer)
+    publishTimer = null
   }
   const video = document.querySelector("video")
   if (video) {
@@ -341,7 +368,7 @@ function publish(): void {
         swarm: swarmIdFor(currentUrl),
         stats: line,
         u: storedValue("xt_star_user"),
-        deviceId: storedValue("xt_star_device"),
+        deviceId: deviceId(),
       }),
       keepalive: true,
     })
