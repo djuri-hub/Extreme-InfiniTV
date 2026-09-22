@@ -64,6 +64,7 @@ import {
   isAudioTranscodeChannel,
 } from "@/scripts/lib/audio-proxy.ts"
 import { parseM3U as parseSharedM3U } from "@/scripts/lib/m3u-parser.ts"
+import { withViewerToken } from "@/scripts/lib/p2p"
 import { stepChannelIndex, channelKeyDirection } from "@/scripts/lib/channel-step.ts"
 import {
   hasHevcNameHint,
