@@ -3929,6 +3929,18 @@ function releaseLocalPlaybackForHandoff() {
 async function play(streamId, name, reason = "user") {
   // Every tune's trigger reaches the log file, so sessions reconstruct from it.
   log.info("[xt:livetv] tune", { streamId, name: name || null, reason })
+  // A device the operator closed stays closed: no channel, no retune, until a fresh sign-in
+  // clears the flag (see lib/p2p.ts and the login page).
+  try {
+    const blocked = localStorage.getItem("xt_blocked")
+    if (blocked) {
+      log.warn("[xt:livetv] tune refused - this device is closed by the operator", { streamId, blocked })
+      toastError(blocked, { duration: 8000 })
+      return
+    }
+  } catch {
+    /* no storage: nothing to refuse */
+  }
   if (reason === "user") {
     freezeRetuneCounts.delete(streamId)
     nativeRelatchAttempts.delete(streamId)

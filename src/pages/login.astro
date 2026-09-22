@@ -1874,6 +1874,8 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 			});
 			try {
 				localStorage.setItem("xt_star_user", username);
+				// A sign-in is how a device the operator closed comes back.
+				localStorage.removeItem("xt_blocked");
 			} catch {}
 			say("Prijava uspje?na ? " + (data.channels || 0) + " kanala.");
 			if (saved && saved._id) {

@@ -1247,6 +1247,21 @@ function attachHlsToVideo(
     }
   }
   const hls = new HlsClass(hlsConfig)
+  // The panel can close this device mid-stream (see lib/p2p.ts): tear the player down instead
+  // of leaving it to buffer behind a paused element.
+  try {
+    window.addEventListener(
+      "xt:blocked",
+      () => {
+        try {
+          hls.destroy()
+        } catch {}
+      },
+      { once: true }
+    )
+  } catch {
+    /* an environment without window events still gets the paused, source-less element */
+  }
   if (p2p) attachP2pStats(hls, cleanUrl)
   let netRecover = 0
   let mediaRecover = 0

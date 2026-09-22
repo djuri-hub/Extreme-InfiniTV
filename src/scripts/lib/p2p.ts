@@ -329,23 +329,49 @@ function stopPlayback(reason: string): void {
     window.clearInterval(publishTimer)
     publishTimer = null
   }
-  const video = document.querySelector("video")
-  if (video) {
-    try {
-      video.pause()
-    } catch {}
+  const message =
+    reason === "expired"
+      ? "Nalog je istekao"
+      : reason === "device-removed"
+        ? "Ure?aj je uklonjen sa naloga"
+        : reason === "device-blocked"
+          ? "Ure?aj je blokiran"
+          : reason === "device-limit"
+            ? "Prekora?en broj ure?aja na nalogu"
+            : "Nalog je isklju?en"
+  // Remember it: the player refuses to tune again until a fresh sign-in clears this.
+  try {
+    localStorage.setItem("xt_blocked", message)
+  } catch {}
+  // Pausing is not stopping: the live player re-tunes on its own, so drop the source too and
+  // keep dropping it for a while. That is what "the operator closed this device" has to mean.
+  const hardStop = () => {
+    for (const video of Array.from(document.querySelectorAll("video"))) {
+      try {
+        video.pause()
+      } catch {}
+      try {
+        if (video.getAttribute("src")) {
+          video.removeAttribute("src")
+          video.load()
+        }
+      } catch {}
+      try {
+        video.style.visibility = "hidden"
+      } catch {}
+    }
   }
+  hardStop()
+  let strikes = 0
+  const watchdog = window.setInterval(() => {
+    hardStop()
+    if (++strikes > 15) window.clearInterval(watchdog)
+  }, 2000)
   const el = ensureChip()
   if (el) {
-    el.textContent =
-      reason === "expired"
-        ? "Nalog je istekao"
-        : reason === "device-removed"
-          ? "Ure?aj je uklonjen sa naloga"
-          : reason === "device-blocked"
-            ? "Ure?aj je blokiran"
-            : "Nalog je isklju?en"
+    el.textContent = message
     el.style.color = "#ffb4b4"
+    el.style.visibility = "visible"
   }
 }
 
