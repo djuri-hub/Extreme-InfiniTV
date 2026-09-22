@@ -896,6 +896,55 @@ const navStructure: NavSection[] = [
               </script>
             </div>
 
+            <!-- P2P sharing: viewers of one channel serve each other the segments -->
+            <div id="card-p2p" data-settings-item class="settings-row scroll-mt-6 lg:scroll-mt-20">
+              <div class="settings-row__text">
+                <h3 data-i18n="settings.p2p.title" class="text-sm font-medium leading-snug">P2P sharing</h3>
+                <p data-i18n="settings.p2p.helperLong" class="text-xs text-fg-3">
+                  Share live channels with other viewers of the same channel. Segments are
+                  exchanged directly between the players; anything they cannot provide still
+                  comes from the server, so playback never depends on a peer being there.
+                  Applies to this device, and can be changed at any time.
+                </p>
+              </div>
+              <div class="settings-row__control">
+                <div
+                  id="settings-p2p"
+                  class="settings-seg"
+                  role="radiogroup"
+                  aria-label="P2P sharing"
+                  data-i18n-attr="aria-label:settings.p2p.label">
+                  <button type="button" data-p2p="on"  aria-pressed="false" data-i18n="settings.p2p.on"  class="p2p-btn btn">On</button>
+                  <button type="button" data-p2p="off" aria-pressed="false" data-i18n="settings.p2p.off" class="p2p-btn btn">Off</button>
+                </div>
+              </div>
+              <script is:inline>
+                (function () {
+                  var group = document.getElementById("settings-p2p");
+                  if (!group) return;
+                  function read() {
+                    try { return localStorage.getItem("xt_p2p_enabled") !== "0" } catch (e) { return true }
+                  }
+                  function paint(on) {
+                    var btns = group.querySelectorAll(".p2p-btn");
+                    for (var i = 0; i < btns.length; i++) {
+                      var isOn = btns[i].getAttribute("data-p2p") === "on";
+                      btns[i].setAttribute("aria-pressed", isOn === on ? "true" : "false");
+                    }
+                  }
+                  paint(read());
+                  group.addEventListener("click", function (ev) {
+                    var node = ev.target;
+                    var btn = node && node.closest ? node.closest(".p2p-btn") : null;
+                    if (!btn) return;
+                    var on = btn.getAttribute("data-p2p") === "on";
+                    try { localStorage.setItem("xt_p2p_enabled", on ? "1" : "0") } catch (e) {}
+                    paint(on);
+                  });
+                })();
+              </script>
+            </div>
+
             <!-- Captions auto: turns on subtitles at playback start when the title has them -->
             <div id="card-captions-auto" data-settings-item class="settings-row scroll-mt-6 lg:scroll-mt-20">
               <div class="settings-row__text">

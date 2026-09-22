@@ -38,6 +38,8 @@ const KEY_TMDB_KEY = "xt_tmdb_key"
 const KEY_TMDB_ENABLED = "xt_tmdb_enabled"
 const KEY_TVDB_ENABLED = "xt_tvdb_enabled"
 const KEY_DEV_MODE = "xt_dev_mode"
+// Peer-to-peer delivery of live channels (see scripts/lib/p2p.ts).
+const KEY_P2P_ENABLED = "xt_p2p_enabled"
 const KEY_RECEIVER_MODE = "xt_receiver_mode"
 const KEY_RECEIVER_BOOT = "xt_receiver_boot"
 const KEY_RECEIVER_NAME = "xt_receiver_name"
@@ -957,6 +959,21 @@ export function setHapticsEnabled(enabled) {
 export const MONO_AUDIO_EVENT = "xt:mono-audio-changed"
 
 /** Mono audio: default off. */
+export const P2P_EVENT = "xt:p2p-changed"
+
+/** P2P sharing: default ON — a viewer helping the next viewer is the point, and it costs
+ *  nothing while nobody else is watching the same channel. */
+export function getP2pEnabled() {
+  return readLS(KEY_P2P_ENABLED, "1") !== "0"
+}
+
+export function setP2pEnabled(enabled) {
+  writeLS(KEY_P2P_ENABLED, enabled ? "1" : "0")
+  document.dispatchEvent(
+    new CustomEvent(P2P_EVENT, { detail: { value: !!enabled } })
+  )
+}
+
 export function getMonoAudioEnabled() {
   return readLS(KEY_MONO_AUDIO, "") === "1"
 }

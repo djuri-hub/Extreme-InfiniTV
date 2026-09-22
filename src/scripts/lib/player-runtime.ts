@@ -22,7 +22,7 @@ import {
   type AudioTrackSource,
 } from "@/scripts/lib/audio-tracks.js"
 import { HlsJsP2PEngine } from "p2p-media-loader-hlsjs"
-import { p2pConfigFor, swarmIdFor } from "@/scripts/lib/p2p"
+import { attachP2pStats, p2pConfigFor, swarmIdFor } from "@/scripts/lib/p2p"
 import {
   getPlayerBackend,
   getPlayerPath,
@@ -1247,6 +1247,7 @@ function attachHlsToVideo(
     }
   }
   const hls = new HlsClass(hlsConfig)
+  if (p2p) attachP2pStats(hls)
   let netRecover = 0
   let mediaRecover = 0
   let parseErrors = 0

@@ -172,3 +172,81 @@ export function p2pConfigFor(url: string): Record<string, unknown> | null {
 // Ask for the relay credentials as soon as this module loads, so the first channel a viewer
 // tunes already has them.
 warmUpIceServers()
+
+// ---------------------------------------------------------------------------- the readout
+//
+// What the viewer sees: how many peers are connected and how much of what they are watching
+// came from them instead of from the server. The library keeps no per-segment verdict that can
+// be read from outside — its request table is discarded the moment a segment is delivered, and
+// its debug log only exists when the `debug` module is switched on before load; both were tried
+// on the web player and both read zero while two viewers demonstrably shared. What cannot lie is
+// the difference between two counts this module can see: what the PLAYER consumed (hls.js's own
+// fragment-loaded event) and what the NETWORK carried (segment requests, hooked below).
+
+let delivered = 0
+const segmentsFromNetwork = new Set<string>()
+let netHooked = false
+
+function hookNetwork(): void {
+  if (netHooked) return
+  netHooked = true
+  const isSegment = (u: unknown) => /\/seg\/[^/]+\/[^/]+\.ts(\?|$)/i.test(String((u as { url?: string })?.url ?? u ?? ""))
+  const note = (u: unknown) => {
+    const s = String((u as { url?: string })?.url ?? u ?? "")
+    if (isSegment(s)) segmentsFromNetwork.add(s.split("?")[0])
+  }
+  try {
+    const open = XMLHttpRequest.prototype.open
+    XMLHttpRequest.prototype.open = function (method: string, url: string, ...rest: unknown[]) {
+      note(url)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (open as any).call(this, method, url, ...rest)
+    }
+    const fetchImpl = window.fetch
+    if (fetchImpl) {
+      window.fetch = function (input: RequestInfo | URL, init?: RequestInit) {
+        note(input)
+        return fetchImpl.call(window, input, init)
+      }
+    }
+  } catch {
+    /* a browser that does not allow the hook simply reports origin-only numbers */
+  }
+}
+
+let lastEngine: { p2pEngine?: { core?: { mainStreamLoader?: { p2pLoaders?: { currentLoader?: { connectedPeerCount?: number } } } } } } | null = null
+
+/** Called by the player right after it is built, with the instance we want numbers from. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function attachP2pStats(hls: any): void {
+  hookNetwork()
+  delivered = 0
+  segmentsFromNetwork.clear()
+  lastEngine = hls
+  try {
+    hls.on("hlsFragLoaded", () => { delivered++ })
+  } catch {
+    /* an engine without the event simply shows peers and no share */
+  }
+}
+
+function connectedPeers(): number {
+  try {
+    return lastEngine?.p2pEngine?.core?.mainStreamLoader?.p2pLoaders?.currentLoader?.connectedPeerCount ?? 0
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * One line for the player's stats overlay: how much came from the mesh and who it came from.
+ * `null` when the mesh is off for this viewer (the overlay then shows nothing extra).
+ */
+export function p2pStatsLine(): string | null {
+  if (!p2pEnabled()) return null
+  const peers = connectedPeers()
+  if (!delivered) return peers > 0 ? `0 % / ${peers} peer${peers === 1 ? "" : "s"}` : "waiting for a peer"
+  const fromPeers = Math.max(0, delivered - segmentsFromNetwork.size)
+  const pct = Math.round((100 * fromPeers) / delivered)
+  return `${pct} % / ${peers} peer${peers === 1 ? "" : "s"} (${fromPeers}/${delivered})`
+}

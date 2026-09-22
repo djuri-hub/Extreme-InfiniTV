@@ -12,6 +12,7 @@ import {
 import { t } from "@/scripts/lib/i18n.js"
 import { toast } from "@/scripts/lib/toast.js"
 import { log } from "@/scripts/lib/log.js"
+import { p2pStatsLine } from "@/scripts/lib/p2p"
 
 export type Translate = (key: string, params?: Record<string, string | number>) => string
 
@@ -114,6 +115,9 @@ export function statsRows(
     { label: translate("player.stats.dropped"), value: droppedValue },
     { label: translate("player.stats.buffered"), value: bufferedValue },
     { label: translate("player.stats.segment"), value: segmentValue },
+    // Peer-to-peer delivery: how much of this stream came from other viewers, and
+    // how many are connected. The label stays "P2P" in every language on purpose.
+    ...(p2pStatsLine() ? [{ label: "P2P", value: p2pStatsLine() as string }] : []),
   ]
 }
 
