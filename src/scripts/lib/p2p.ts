@@ -247,6 +247,20 @@ let currentUrl = ""
 let publishTimer: number | null = null
 let recoveryTimer: number | null = null
 let chip: HTMLElement | null = null
+let chipHideTimer: number | null = null
+let lastPeers = -1
+
+/** Show the pill, then let it fade: it is a glance, not a permanent overlay. */
+function flashChip(seconds: number): void {
+  const el = ensureChip()
+  if (!el) return
+  el.style.transition = "opacity .8s ease"
+  el.style.opacity = "0.9"
+  if (chipHideTimer !== null) window.clearTimeout(chipHideTimer)
+  chipHideTimer = window.setTimeout(() => {
+    el.style.opacity = "0"
+  }, seconds * 1000)
+}
 
 const REPORT_ENDPOINT = TURN_ENDPOINT.replace(/\/turn-credentials$/, "/player/report")
 
@@ -469,6 +483,13 @@ function publish(): void {
   }
   const el = ensureChip()
   if (el) el.textContent = "P2P: " + line
+  // Announce the picture briefly on start, and again when the mesh actually changes (a peer
+  // joining is worth a glance; the same "38 % / 1 peer" every ten seconds is not).
+  const peers = connectedPeers()
+  if (peers !== lastPeers) {
+    lastPeers = peers
+    flashChip(10)
+  }
   try {
     void fetch(REPORT_ENDPOINT, {
       method: "POST",

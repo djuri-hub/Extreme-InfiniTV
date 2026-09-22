@@ -897,6 +897,18 @@ const navStructure: NavSection[] = [
             </div>
 
             <!-- P2P sharing: viewers of one channel serve each other the segments -->
+        <!-- Sign out: clears the signed-in playlist (and this device's token) and returns to
+             the sign-in screen. The account itself is untouched on the operator's panel. -->
+        <div id="card-account" class="settings-row">
+          <div class="min-w-0">
+            <h3 class="text-sm font-medium leading-snug">Star nalog</h3>
+            <p class="mt-0.5 text-xs leading-relaxed text-fg-3">
+              Odjavi ovaj ure?aj i prijavi se drugim nalogom.
+            </p>
+          </div>
+          <button id="settings-signout" type="button" class="btn justify-center">Odjavi se</button>
+          <span id="settings-signout-status" aria-live="polite" class="text-xs text-fg-3 empty:hidden"></span>
+        </div>
             <div id="card-p2p" data-settings-item class="settings-row scroll-mt-6 lg:scroll-mt-20">
               <div class="settings-row__text">
                 <h3 data-i18n="settings.p2p.title" class="text-sm font-medium leading-snug">P2P sharing</h3>
@@ -4650,6 +4662,31 @@ const navStructure: NavSection[] = [
     }
 
     // Off the top-level await chain: a stuck isStoreBuild() IPC must not block this script.
+    // Sign out: wipe the signed-in playlist and go back to the connect screen.
+    try {
+      const signOutBtn = document.getElementById("settings-signout")
+      signOutBtn?.addEventListener("click", async () => {
+        const status = document.getElementById("settings-signout-status")
+        signOutBtn.disabled = true
+        if (status) status.textContent = "Odjavljujem?"
+        try {
+          const { getState, restoreState } = await import("@/scripts/lib/creds.js")
+          const state = await getState()
+          await restoreState({ entries: [], selectedId: null })
+          try {
+            localStorage.removeItem("xt_blocked")
+            localStorage.removeItem("xt_star_user")
+          } catch {}
+          log.info("[xt:settings] signed out", { hadEntries: (state?.entries || []).length })
+        } catch (err) {
+          log.warn("[xt:settings] sign-out failed:", err)
+        }
+        location.href = "/login"
+      })
+    } catch (err) {
+      log.warn("[xt:settings] could not wire sign-out:", err)
+    }
+
     const updaterConfigReady = (async () => {
       storeBuild = await isStoreBuild()
       const noInAppUpdate = storeBuild || !!sandboxed
