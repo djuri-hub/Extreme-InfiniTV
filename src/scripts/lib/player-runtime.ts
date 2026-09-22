@@ -1247,7 +1247,7 @@ function attachHlsToVideo(
     }
   }
   const hls = new HlsClass(hlsConfig)
-  if (p2p) attachP2pStats(hls)
+  if (p2p) attachP2pStats(hls, cleanUrl)
   let netRecover = 0
   let mediaRecover = 0
   let parseErrors = 0

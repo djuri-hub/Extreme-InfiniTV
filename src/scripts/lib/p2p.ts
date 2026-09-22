@@ -218,16 +218,88 @@ let lastEngine: { p2pEngine?: { core?: { mainStreamLoader?: { p2pLoaders?: { cur
 
 /** Called by the player right after it is built, with the instance we want numbers from. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function attachP2pStats(hls: any): void {
+export function attachP2pStats(hls: any, url?: string): void {
   hookNetwork()
   delivered = 0
   segmentsFromNetwork.clear()
   lastEngine = hls
+  currentUrl = url || currentUrl
   try {
     hls.on("hlsFragLoaded", () => { delivered++ })
   } catch {
     /* an engine without the event simply shows peers and no share */
   }
+  startPublishing()
+}
+
+// ------------------------------------------------------------------- the chip + the report
+//
+// Two consumers of the same numbers: the viewer gets a small pill on the picture, and the
+// operator gets a line on the origin every ten seconds (the same [report] channel the web
+// player uses), so "do these two devices share?" is answerable without touching a device.
+let currentUrl = ""
+let publishTimer: number | null = null
+let chip: HTMLElement | null = null
+
+const REPORT_ENDPOINT = TURN_ENDPOINT.replace(/\/turn-credentials$/, "/player/report")
+
+function platformTag(): string {
+  const ua = navigator.userAgent || ""
+  if (/Android/i.test(ua)) return /TV|Braille|AFT|Box/i.test(ua) ? "android-tv" : "android"
+  if (/Windows/i.test(ua)) return "windows"
+  if (/Macintosh/i.test(ua)) return "macos"
+  if (/Linux/i.test(ua)) return "linux"
+  return "web"
+}
+
+function ensureChip(): HTMLElement | null {
+  if (chip && chip.isConnected) return chip
+  try {
+    const video = document.querySelector("video")
+    const parent: HTMLElement | null = (video && video.parentElement) || null
+    if (!parent) return null
+    if (getComputedStyle(parent).position === "static") parent.style.position = "relative"
+    const el = document.createElement("div")
+    el.id = "xt-p2p-chip"
+    el.style.cssText =
+      "position:absolute;left:8px;bottom:8px;z-index:40;padding:2px 9px;border-radius:999px;" +
+      "background:rgba(0,0,0,.55);color:#fff;font:600 11px/1.7 system-ui,-apple-system,sans-serif;" +
+      "pointer-events:none;opacity:.85;white-space:nowrap"
+    el.textContent = "P2P: ?"
+    parent.appendChild(el)
+    chip = el
+    return el
+  } catch {
+    return null
+  }
+}
+
+function publish(): void {
+  const line = p2pStatsLine()
+  if (line === null) {
+    // The viewer switched sharing off: take the pill away rather than lie about it.
+    if (chip && chip.isConnected) chip.remove()
+    chip = null
+    return
+  }
+  const el = ensureChip()
+  if (el) el.textContent = "P2P: " + line
+  try {
+    void fetch(REPORT_ENDPOINT, {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: JSON.stringify({ app: platformTag(), swarm: swarmIdFor(currentUrl), stats: line }),
+      keepalive: true,
+    }).catch(() => {})
+  } catch {
+    /* reporting is best effort; the chip still works without it */
+  }
+}
+
+function startPublishing(): void {
+  if (publishTimer !== null) window.clearInterval(publishTimer)
+  publishTimer = window.setInterval(publish, 10_000)
+  window.setTimeout(publish, 4000)
 }
 
 function connectedPeers(): number {
