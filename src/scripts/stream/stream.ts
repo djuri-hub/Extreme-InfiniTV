@@ -3329,6 +3329,20 @@ function armDeadVideoWatchdog() {
         return
       }
     }
+    // Nothing was decoded: on Android the device's own player may still handle it (HEVC in
+    // WebView's MSE usually cannot, ExoPlayer usually can). Try that before calling it broken.
+    if (androidNativePlayerAvailable && !ctx.nativeFallbackTried) {
+      ctx.nativeFallbackTried = true
+      log.warn("[xt:livetv] video decoded no frames - handing off to the native player", {
+        streamId: ctx.streamId,
+        everyFrameDropped,
+      })
+      toast({ title: t("stream.failure.nativeFallback") })
+      launchNativeLiveSession(ctx.streamId, ctx.name).then((launched) => {
+        if (!launched) showPlaybackFailurePanel(ctx, { decodeFailure: true })
+      })
+      return
+    }
     suppressPauseTrackingUntilMs = Date.now() + 500
     try { vjs?.pause?.() } catch {}
     hideTuningOverlay()
