@@ -1995,6 +1995,18 @@ async function runAutoDiagnostic(ctx, dismissGenericToast) {
   }
 }
 
+// The panel reopened the account: pick up the channel that was playing when it was closed.
+try {
+  window.addEventListener("xt:unblocked", () => {
+    const ctx = lastPlayContext
+    if (!ctx || !ctx.streamId) return
+    log.info("[xt:livetv] account reopened - re-tuning", { streamId: ctx.streamId })
+    void play(ctx.streamId, ctx.name, "auto:unblocked")
+  })
+} catch {
+  /* no window events: the viewer can pick a channel manually */
+}
+
 // Video.js's dispose() removes the whole `#player` element rather than restoring it; keep a pristine clone to reinsert on remount.
 let playerElementTemplate: HTMLElement | null = null
 
@@ -3929,8 +3941,9 @@ function releaseLocalPlaybackForHandoff() {
 async function play(streamId, name, reason = "user") {
   // Every tune's trigger reaches the log file, so sessions reconstruct from it.
   log.info("[xt:livetv] tune", { streamId, name: name || null, reason })
-  // A device the operator closed stays closed: no channel, no retune, until a fresh sign-in
-  // clears the flag (see lib/p2p.ts and the login page).
+  // A device the operator closed stays closed until the panel says otherwise: the flag is
+  // cleared by a fresh sign-in, or by the app's own probe once the account is active again
+  // (see lib/p2p.ts), which also fires the event that re-tunes this channel below.
   try {
     const blocked = localStorage.getItem("xt_blocked")
     if (blocked) {

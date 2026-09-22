@@ -245,6 +245,7 @@ export function attachP2pStats(hls: any, url?: string): void {
 // player uses), so "do these two devices share?" is answerable without touching a device.
 let currentUrl = ""
 let publishTimer: number | null = null
+let recoveryTimer: number | null = null
 let chip: HTMLElement | null = null
 
 const REPORT_ENDPOINT = TURN_ENDPOINT.replace(/\/turn-credentials$/, "/player/report")
@@ -373,6 +374,54 @@ function stopPlayback(reason: string): void {
     el.style.color = "#ffb4b4"
     el.style.visibility = "visible"
   }
+  // Keep asking whether the operator has reopened the account. A viewer who was closed for a
+  // minute, then reopened, should not have to find the sign-in screen to start watching again.
+  if (recoveryTimer !== null) window.clearInterval(recoveryTimer)
+  recoveryTimer = window.setInterval(() => {
+    void (async () => {
+      const who = storedValue("xt_star_user")
+      if (!who) return
+      try {
+        const res = await fetch(REPORT_ENDPOINT, {
+          method: "POST",
+          headers: { "content-type": "text/plain" },
+          body: JSON.stringify({
+            app: platformTag(),
+            swarm: swarmIdFor(currentUrl),
+            stats: "blocked",
+            u: who,
+            deviceId: deviceId(),
+          }),
+          keepalive: true,
+        })
+        const data = (await res.json()) as { stop?: boolean } | null
+        if (!data || data.stop !== false) return
+        try {
+          localStorage.removeItem("xt_blocked")
+        } catch {}
+        if (recoveryTimer !== null) {
+          window.clearInterval(recoveryTimer)
+          recoveryTimer = null
+        }
+        for (const video of Array.from(document.querySelectorAll("video"))) {
+          try {
+            video.style.visibility = ""
+          } catch {}
+        }
+        const mark = ensureChip()
+        if (mark) {
+          mark.textContent = "Nalog je ponovo aktivan"
+          mark.style.color = "#cfe8ff"
+        }
+        try {
+          window.dispatchEvent(new CustomEvent("xt:unblocked"))
+        } catch {}
+        startPublishing()
+      } catch {
+        /* the probe is best effort; the next one tries again */
+      }
+    })()
+  }, 15000)
 }
 
 function publish(): void {
