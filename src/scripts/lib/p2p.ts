@@ -280,6 +280,48 @@ function ensureChip(): HTMLElement | null {
   }
 }
 
+function storedValue(key: string): string | null {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+/** Stop the picture when the panel closes this account or this device.
+ *  The reply to the ten-second report is the operator's switch; without acting on it a
+ *  disabled viewer would keep watching until the playlist token expired a day later. */
+function stopPlayback(reason: string): void {
+  try {
+    log.warn("[xt:p2p] stopped by the panel:", reason)
+  } catch {
+    /* a build without the logger still stops */
+  }
+  try {
+    window.dispatchEvent(new CustomEvent("xt:blocked", { detail: { reason } }))
+  } catch {
+    /* an environment without CustomEvent falls back to pausing below */
+  }
+  const video = document.querySelector("video")
+  if (video) {
+    try {
+      video.pause()
+    } catch {}
+  }
+  const el = ensureChip()
+  if (el) {
+    el.textContent =
+      reason === "expired"
+        ? "Nalog je istekao"
+        : reason === "device-removed"
+          ? "Ure?aj je uklonjen sa naloga"
+          : reason === "device-blocked"
+            ? "Ure?aj je blokiran"
+            : "Nalog je isklju?en"
+    el.style.color = "#ffb4b4"
+  }
+}
+
 function publish(): void {
   const line = p2pStatsLine()
   if (line === null) {
@@ -294,9 +336,20 @@ function publish(): void {
     void fetch(REPORT_ENDPOINT, {
       method: "POST",
       headers: { "content-type": "text/plain" },
-      body: JSON.stringify({ app: platformTag(), swarm: swarmIdFor(currentUrl), stats: line }),
+      body: JSON.stringify({
+        app: platformTag(),
+        swarm: swarmIdFor(currentUrl),
+        stats: line,
+        u: storedValue("xt_star_user"),
+        deviceId: storedValue("xt_star_device"),
+      }),
       keepalive: true,
-    }).catch(() => {})
+    })
+      .then((res) => res.json())
+      .then((data: { stop?: boolean; reason?: string } | null) => {
+        if (data && data.stop) stopPlayback(data.reason || "blocked")
+      })
+      .catch(() => {})
   } catch {
     /* reporting is best effort; the chip still works without it */
   }
