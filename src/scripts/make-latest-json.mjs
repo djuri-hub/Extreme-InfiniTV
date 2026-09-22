@@ -47,7 +47,7 @@ const version = versionMatch[1]
 // the filename component (but leave the URL slashes alone) so the updater
 // can reach files like "Extreme InfiniTV_1.2.0_x64-setup.exe".
 const downloadUrl =
-    `https://github.com/infinitel8p/Extreme-InfiniTV/releases/download/v${version}/` +
+    `https://github.com/djuri-hub/Extreme-InfiniTV/releases/download/v${version}/` +
     encodeURIComponent(installerFile)
 
 // Build JSON structure

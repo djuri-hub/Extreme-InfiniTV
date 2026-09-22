@@ -25,7 +25,7 @@ const repoRoot = join(__dirname, "..", "..")
 const binariesDir = join(repoRoot, "src-tauri", "binaries")
 
 const RELEASE_BASE_URL =
-  "https://github.com/infinitel8p/Extreme-InfiniTV/releases/download/ffmpeg-sidecar-v2"
+  "https://github.com/djuri-hub/Extreme-InfiniTV/releases/download/ffmpeg-sidecar-v2"
 const RELEASE_TAG = RELEASE_BASE_URL.split("/").pop()
 const MARKER_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const PINS_FILE = "src/scripts/ffmpeg-sidecar-checksums.json"

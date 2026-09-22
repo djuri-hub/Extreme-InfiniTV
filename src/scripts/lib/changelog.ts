@@ -38,7 +38,7 @@ interface CacheShape {
 const PER_PAGE = 100
 
 export async function fetchReleases(
-  repoSlug = "infinitel8p/Extreme-InfiniTV"
+  repoSlug = "djuri-hub/Extreme-InfiniTV"
 ): Promise<ReleaseSummary[]> {
   try {
     const cached = sessionStorage.getItem(CACHE_KEY)

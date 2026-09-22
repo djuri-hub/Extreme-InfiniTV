@@ -13,7 +13,7 @@ use tauri::Emitter;
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 const ALLOWED_HOST: &str = "github.com";
-const ALLOWED_PATH_PREFIX: &str = "/infinitel8p/Extreme-InfiniTV/releases/download/";
+const ALLOWED_PATH_PREFIX: &str = "/djuri-hub/Extreme-InfiniTV/releases/download/";
 
 // Builder timeout covers the manifest fetch only - `check()` hands the Update a fresh `timeout: None`.
 const CHECK_TIMEOUT: Duration = Duration::from_secs(20);

@@ -7,12 +7,12 @@ import { log } from "@/scripts/lib/log.js"
 import { getUpdateChannel, UPDATE_CHANNEL_EVENT } from "@/scripts/lib/app-settings.js"
 
 export const GITHUB_RELEASES_URL =
-  "https://github.com/infinitel8p/Extreme-InfiniTV/releases"
+  "https://github.com/djuri-hub/Extreme-InfiniTV/releases"
 export const MS_STORE_UPDATES_URL = "ms-windows-store://downloadsandupdates"
 export const STABLE_UPDATE_FEED_URL =
-  "https://github.com/infinitel8p/Extreme-InfiniTV/releases/latest/download/latest.json"
+  "https://github.com/djuri-hub/Extreme-InfiniTV/releases/latest/download/latest.json"
 
-const REPO_SLUG = "infinitel8p/Extreme-InfiniTV"
+const REPO_SLUG = "djuri-hub/Extreme-InfiniTV"
 const PLAY_STORE_PACKAGE = "com.android.vending"
 
 interface AndroidDeviceInfoBridge {

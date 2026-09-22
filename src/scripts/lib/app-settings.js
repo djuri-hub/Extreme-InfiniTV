@@ -1088,7 +1088,10 @@ export function setCaptionsAutoEnabled(enabled) {
 }
 
 export function getAutoUpdateEnabled() {
-  return readLS(KEY_AUTO_UPDATE, "") !== "0"
+  // OFF by default in this deployment: the app notifies, the operator installs the build
+  // from the download page. A feed that names someone else's release can then never
+  // replace the binary on its own ? which is exactly what one upstream feed did here.
+  return readLS(KEY_AUTO_UPDATE, "") === "1"
 }
 
 export function setAutoUpdateEnabled(enabled) {
