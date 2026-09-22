@@ -22,7 +22,7 @@ import {
   type AudioTrackSource,
 } from "@/scripts/lib/audio-tracks.js"
 import { HlsJsP2PEngine } from "p2p-media-loader-hlsjs"
-import { attachP2pStats, p2pConfigFor, swarmIdFor } from "@/scripts/lib/p2p"
+import { attachP2pStats, p2pConfigFor, swarmIdFor, withViewerToken } from "@/scripts/lib/p2p"
 import {
   getPlayerBackend,
   getPlayerPath,
@@ -1188,7 +1188,9 @@ function attachHlsToVideo(
   }
   // Native <video src> cannot carry a header, so those paths pass the
   // original url through as best-effort; the hls.js paths get the split form.
-  const { url: cleanUrl, authorization } = splitUrlAuth(url)
+  const { url: rawCleanUrl, authorization } = splitUrlAuth(url)
+  // Make this request attributable to the signed-in account (see withViewerToken).
+  const cleanUrl = withViewerToken(rawCleanUrl)
   let authorizedOrigin: string | null = null
   if (authorization) {
     try { authorizedOrigin = new URL(cleanUrl).origin } catch {}

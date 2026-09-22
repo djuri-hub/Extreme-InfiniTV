@@ -3877,6 +3877,9 @@ async function launchNativeLiveSession(initialStreamId, initialName) {
       if (built) streamUrl = built
     }
     if (!streamUrl) continue
+    // The device's own player fetches these directly: without the account token the server
+    // cannot tell whose player it is, and the panel could not close it (see lib/p2p.ts).
+    streamUrl = withViewerToken(streamUrl)
     const headers = streamHeadersById.get(channel.id) || null
     channelInputs.push({
       id: String(channel.id),

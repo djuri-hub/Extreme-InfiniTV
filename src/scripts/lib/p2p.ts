@@ -281,6 +281,41 @@ function ensureChip(): HTMLElement | null {
   }
 }
 
+/** The `u`/`e`/`s` token of the playlist this installation signed in with, as a query string.
+ *  Empty when the active playlist is not one of ours (a plain M3U link, an Xtream login). */
+export function viewerTokenQuery(): string {
+  try {
+    const raw = localStorage.getItem("xt_playlists")
+    if (!raw) return ""
+    const state = JSON.parse(raw) as { entries?: Array<{ _id?: string; url?: string }>; selectedId?: string }
+    const entry = (state.entries || []).find((e) => e && e._id === state.selectedId)
+    if (!entry || !entry.url) return ""
+    const url = new URL(entry.url)
+    const u = url.searchParams.get("u")
+    const e = url.searchParams.get("e")
+    const s = url.searchParams.get("s")
+    if (!u || !e || !s) return ""
+    return "u=" + encodeURIComponent(u) + "&e=" + encodeURIComponent(e) + "&s=" + encodeURIComponent(s)
+  } catch {
+    return ""
+  }
+}
+
+/** Stamp the token onto a channel address when it does not have one yet. */
+export function withViewerToken(url: string): string {
+  try {
+    const token = viewerTokenQuery()
+    if (!token) return url
+    const parsed = new URL(url)
+    if (parsed.searchParams.get("u")) return url
+    // Only our own origin: another provider's address must not receive our token.
+    if (!/hardrockradio\.net$/i.test(parsed.hostname)) return url
+    return url + (url.includes("?") ? "&" : "?") + token
+  } catch {
+    return url
+  }
+}
+
 function storedValue(key: string): string | null {
   try {
     return localStorage.getItem(key)
