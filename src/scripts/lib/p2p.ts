@@ -16,7 +16,13 @@
 // and fragment dropped, trailing slash trimmed) so a cosmetic difference in how an operator
 // saved the address cannot split the audience.
 
-const P2P_TRACKERS = ["wss://tracker.openwebtorrent.com", "wss://tracker.webtorrent.dev"]
+// OUR tracker FIRST: it is the only one that answers (measured 2026-09-22 ? both public
+// ones fail with a WebSocket error from every network we tested, including this server).
+const P2P_TRACKERS = [
+  "wss://hardrockradio.net:8446",
+  "wss://tracker.openwebtorrent.com",
+  "wss://tracker.webtorrent.dev",
+]
 
 /** Where the relay credentials come from (the same origin the segments do). */
 const TURN_ENDPOINT = "https://hardrockradio.net:8443/turn-credentials"
