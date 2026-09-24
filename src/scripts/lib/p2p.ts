@@ -258,7 +258,9 @@ function flashChip(seconds: number): void {
   el.style.opacity = "0.9"
   if (chipHideTimer !== null) window.clearTimeout(chipHideTimer)
   chipHideTimer = window.setTimeout(() => {
-    el.style.opacity = "0"
+    // Fade DOWN, not away: a status nobody can find is the same as no status. Tapping brings
+    // the full readout back for another ten seconds.
+    el.style.opacity = "0.22"
   }, seconds * 1000)
 }
 
@@ -285,8 +287,12 @@ function ensureChip(): HTMLElement | null {
     el.style.cssText =
       "position:absolute;left:8px;bottom:8px;z-index:40;padding:2px 9px;border-radius:999px;" +
       "background:rgba(0,0,0,.55);color:#fff;font:600 11px/1.7 system-ui,-apple-system,sans-serif;" +
-      "pointer-events:none;opacity:.85;white-space:nowrap"
+      "pointer-events:auto;cursor:pointer;opacity:.85;white-space:nowrap;transition:opacity .8s ease"
     el.textContent = "P2P: ?"
+    el.addEventListener("click", (event) => {
+      event.stopPropagation()
+      flashChip(10)
+    })
     parent.appendChild(el)
     chip = el
     return el

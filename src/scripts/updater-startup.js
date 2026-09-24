@@ -128,3 +128,11 @@ async function maybeRunAutoUpdate() {
 }
 
 maybeRunAutoUpdate()
+
+// The operator's own update feed (see lib/star-update.ts): one check per app session, a few
+// seconds after the UI is up, so a new build is announced without blocking anything.
+setTimeout(() => {
+    void import("@/scripts/lib/star-update")
+        .then((mod) => mod.checkForStarUpdate())
+        .catch((err) => log.warn("[xt:update] star check failed:", err))
+}, 6000)

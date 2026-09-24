@@ -906,7 +906,10 @@ const navStructure: NavSection[] = [
               Odjavi ovaj ure?aj i prijavi se drugim nalogom.
             </p>
           </div>
-          <button id="settings-signout" type="button" class="btn justify-center">Odjavi se</button>
+          <div class="flex items-center gap-2">
+            <button id="settings-update" type="button" class="btn justify-center">Provjeri azuriranje</button>
+            <button id="settings-signout" type="button" class="btn justify-center">Odjavi se</button>
+          </div>
           <span id="settings-signout-status" aria-live="polite" class="text-xs text-fg-3 empty:hidden"></span>
         </div>
             <div id="card-p2p" data-settings-item class="settings-row scroll-mt-6 lg:scroll-mt-20">
@@ -4685,6 +4688,17 @@ const navStructure: NavSection[] = [
       })
     } catch (err) {
       log.warn("[xt:settings] could not wire sign-out:", err)
+    }
+
+    try {
+      document.getElementById("settings-update")?.addEventListener("click", async () => {
+        const { checkForStarUpdate } = await import("@/scripts/lib/star-update")
+        const result = await checkForStarUpdate(true)
+        const status = document.getElementById("settings-signout-status")
+        if (status && result) status.textContent = `verzija ${result.local} / na stranici ${result.remote}`
+      })
+    } catch (err) {
+      log.warn("[xt:settings] could not wire the update check:", err)
     }
 
     const updaterConfigReady = (async () => {
