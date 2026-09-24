@@ -5656,3 +5656,81 @@ if (listStatus && /no playlist selected/i.test(listStatus.textContent || "")) {
     showEmptyState()
   }
 })()
+
+// ---------------------------------------------------------------- enlarged-picture channel list
+//
+// The picture can fill the whole screen (see hiddenPlayerFullscreen / player-runtime's layer).
+// In that state the app's own channel list is behind the picture, and rotating the phone back
+// just to change channel is exactly the annoyance the operator reported. A tap on the picture
+// brings the list up over it.
+function xtGuideOverlay() {
+  let el = document.getElementById("xt-guide-overlay")
+  if (el) return el
+  el = document.createElement("div")
+  el.id = "xt-guide-overlay"
+  el.style.cssText =
+    "position:fixed;inset:0;z-index:2147483600;background:rgba(6,10,20,.92);" +
+    "overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 12px 24px;" +
+    "font:500 15px/1.4 system-ui,-apple-system,sans-serif;color:#F2F6FF"
+  document.body.appendChild(el)
+  return el
+}
+
+function xtCloseGuide() {
+  document.getElementById("xt-guide-overlay")?.remove()
+}
+
+function xtToggleGuide() {
+  const open = document.getElementById("xt-guide-overlay")
+  if (open) {
+    xtCloseGuide()
+    return
+  }
+  const el = xtGuideOverlay()
+  const current = lastPlayContext?.streamId
+  const header = document.createElement("div")
+  header.textContent = "Kanali"
+  header.style.cssText = "font-weight:700;font-size:17px;margin:2px 4px 12px"
+  el.appendChild(header)
+  for (const channel of all) {
+    const row = document.createElement("button")
+    row.type = "button"
+    const active = String(channel.id) === String(current)
+    row.textContent = channel.name || `#${channel.id}`
+    row.style.cssText =
+      "display:block;width:100%;text-align:left;margin:0 0 6px;padding:12px 14px;border-radius:10px;" +
+      "border:1px solid " + (active ? "#FFC64A" : "#21304c") + ";background:" + (active ? "#2a2f18" : "#111C33") +
+      ";color:#F2F6FF;font-size:15px;cursor:pointer"
+    row.addEventListener("click", (event) => {
+      event.stopPropagation()
+      xtCloseGuide()
+      void play(channel.id, channel.name, "user")
+    })
+    el.appendChild(row)
+  }
+  el.addEventListener("click", (event) => {
+    if (event.target === el) xtCloseGuide()
+  })
+}
+
+try {
+  document.addEventListener(
+    "click",
+    (event) => {
+      // Only while the picture is enlarged (the layer is what the fullscreen mode creates).
+      if (!document.getElementById("xt-fs-layer")) return
+      const target = event.target as HTMLElement | null
+      if (!target) return
+      if (target.closest("#xt-guide-overlay")) return
+      if (target.closest("#player, .video-js, video")) {
+        event.preventDefault()
+        event.stopPropagation()
+        xtToggleGuide()
+      }
+    },
+    true
+  )
+} catch {
+  /* no document: nothing to tap */
+}
+
