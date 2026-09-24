@@ -196,7 +196,12 @@ let netHooked = false
 function hookNetwork(): void {
   if (netHooked) return
   netHooked = true
-  const isSegment = (u: unknown) => /\/seg\/[^/]+\/[^/]+\.ts(\?|$)/i.test(String((u as { url?: string })?.url ?? u ?? ""))
+  // Our rewritten /seg/<channel>/<sequence>.ts addresses AND the provider's own /hls/<token>
+  // segments (some channels serve nothing else) ? whatever the player fetches over the network
+  // has to count, or the readout claims a mesh that does not exist.
+  const isSegment = (u: unknown) =>
+    /\/seg\/[^/]+\/[^/]+\.ts(\?|$)/i.test(String((u as { url?: string })?.url ?? u ?? "")) ||
+    /\/hls\/[A-Za-z0-9_\-]{16,}/.test(String((u as { url?: string })?.url ?? u ?? ""))
   const note = (u: unknown) => {
     const s = String((u as { url?: string })?.url ?? u ?? "")
     if (isSegment(s)) segmentsFromNetwork.add(s.split("?")[0])
