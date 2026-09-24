@@ -1803,10 +1803,18 @@ async function mountVideoJs(
   // Fullscreen. The Android shell's WebView does not implement the Fullscreen API, so the
   // player's own fullscreen button did nothing there. An immersive CSS mode (all app chrome
   // hidden, picture fills the screen) plus a Tauri window request covers both worlds.
+  // The wrap that actually holds the picture: never hide an ancestor of it (that is what made
+  // the screen go white with the audio still running).
+  const immersiveTarget = () =>
+    (document.getElementById("player-wrap") as HTMLElement | null) ||
+    (document.querySelector("video")?.closest("div") as HTMLElement | null) ||
+    null
   const setImmersive = (on: boolean) => {
     try {
       document.documentElement.classList.toggle("xt-immersive", on)
       document.body.classList.toggle("xt-immersive", on)
+      const target = immersiveTarget()
+      if (target) target.classList.toggle("xt-immersive-wrap", on)
     } catch {}
     void (async () => {
       try {
@@ -1869,10 +1877,13 @@ async function mountVideoJs(
   try {
     const style = document.createElement("style")
     style.textContent =
-      "html.xt-immersive,body.xt-immersive{overflow:hidden!important}" +
-      "body.xt-immersive>*:not(#player-wrap):not(.vjs-fullscreen){display:none!important}" +
-      "body.xt-immersive #player-wrap,body.xt-immersive #player{position:fixed!important;inset:0!important;" +
-      "width:100vw!important;height:100vh!important;margin:0!important;z-index:9999!important;background:#000}"
+      // Nothing is hidden: the picture's own wrapper is lifted over the app and stretched. An
+      // ancestor can never be removed from the layout this way.
+      "html.xt-immersive,body.xt-immersive{overflow:hidden!important;background:#000!important}" +
+      ".xt-immersive-wrap{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;" +
+      "margin:0!important;padding:0!important;border-radius:0!important;background:#000!important;z-index:2147483000!important}" +
+      ".xt-immersive-wrap video,.xt-immersive-wrap .video-js,.xt-immersive-wrap .vjs-tech{" +
+      "width:100%!important;height:100%!important;max-width:none!important;max-height:none!important}"
     document.head.appendChild(style)
   } catch {}
 
