@@ -1817,6 +1817,38 @@ async function mountVideoJs(
       }
     })()
   }
+  // Rotate the phone and the picture takes the screen, exactly like the device's own player.
+  const phoneShaped = () => {
+    const ua = navigator.userAgent || ""
+    return /Android/i.test(ua) || Math.min(window.innerWidth, window.innerHeight) <= 480
+  }
+  const applyOrientation = () => {
+    if (!phoneShaped()) return
+    setImmersive(window.innerWidth > window.innerHeight)
+  }
+  try {
+    window.addEventListener("orientationchange", () => window.setTimeout(applyOrientation, 250))
+    window.addEventListener("resize", () => window.setTimeout(applyOrientation, 250))
+    window.setTimeout(applyOrientation, 600)
+  } catch {
+    /* an environment without these events keeps the layout it has */
+  }
+  try {
+    // Double tap toggles the enlarged view (that is the gesture viewers try first).
+    let lastTap = 0
+    player.on("click", () => {
+      const now = Date.now()
+      if (phoneShaped() && now - lastTap < 350) {
+        const on = !document.body.classList.contains("xt-immersive")
+        setImmersive(on)
+        applyOrientation()
+        setImmersive(on)
+      }
+      lastTap = now
+    })
+  } catch {
+    /* no taps to listen to */
+  }
   try {
     player.on("fullscreenchange", () => {
       const native = !!(document.fullscreenElement || (document as any).webkitFullscreenElement)
