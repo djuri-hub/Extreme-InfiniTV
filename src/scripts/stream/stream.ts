@@ -3349,9 +3349,11 @@ function armDeadVideoWatchdog() {
       const key = `xt_refresh_tried:${ctx.streamId}`
       if (!sessionStorage.getItem(key)) {
         sessionStorage.setItem(key, "1")
-        const { refreshActive } = await import("@/scripts/lib/creds.js")
-        await refreshActive()
-        log.info("[xt:livetv] refreshed the catalog after a failure", { streamId: ctx.streamId })
+        // Fire and forget: this callback is not async, and the next attempt is what matters.
+        void import("@/scripts/lib/creds.js")
+          .then((m) => m.refreshActive())
+          .then(() => log.info("[xt:livetv] refreshed the catalog after a failure", { streamId: ctx.streamId }))
+          .catch((err) => log.warn("[xt:livetv] catalog refresh after failure failed:", err))
       }
     } catch (err) {
       log.warn("[xt:livetv] catalog refresh after failure failed:", err)
