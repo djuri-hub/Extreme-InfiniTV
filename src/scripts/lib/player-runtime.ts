@@ -1234,6 +1234,9 @@ function attachHlsToVideo(
   const hlsConfig: Record<string, unknown> = {
     enableWorker: !p2p,
     subtitleDisplay: false,
+    // With the mesh on, buffer as long as the mesh window (see lib/p2p.ts): a 30-second buffer
+    // asks for segments a peer has not been offered yet, which reads as "1 peer, 0 %".
+    ...(p2p ? { maxBufferLength: 60, maxMaxBufferLength: 120 } : {}),
     ...(p2p ?? {}),
   }
   if (!p2p && isTauri) {
