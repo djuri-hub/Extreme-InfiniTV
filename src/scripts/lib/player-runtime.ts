@@ -1781,6 +1781,9 @@ async function mountVideoJs(
   // A non-empty playbackRates array surfaces its own rate control, so gate it like the menu button.
   const playbackRatesEnabled = controlBar.playbackRateMenuButton !== false
   const player = videojs(videoEl, {
+    // Hide the control bar quickly after the last touch, and re-hide it after a resize:
+    // pinching to enlarge the picture was making the pause/progress bar flicker on Android.
+    inactivityTimeout: 1500,
     liveui: options.liveui ?? false,
     fluid: options.fluid ?? true,
     preload: options.preload ?? "auto",
@@ -1796,6 +1799,24 @@ async function mountVideoJs(
       },
     },
   }) as any
+
+  // Android (and any pinch-zoom that resizes the player): keep the bar out of the picture.
+  try {
+    const hideBarSoon = () => {
+      window.setTimeout(() => {
+        try {
+          if (!player.paused() && player.controlBar && !player.controlBar.hasClass("vjs-user-active")) {
+            player.controlBar.hide()
+          }
+        } catch {}
+      }, 500)
+    }
+    window.addEventListener("resize", hideBarSoon)
+    window.addEventListener("orientationchange", hideBarSoon)
+    player.on("resize", hideBarSoon)
+  } catch {
+    /* a player without a control bar keeps its default behaviour */
+  }
 
   let activeMpegts: MpegtsHandle | null = null
   let pendingMpegtsAttach: Promise<MpegtsHandle | null> | null = null

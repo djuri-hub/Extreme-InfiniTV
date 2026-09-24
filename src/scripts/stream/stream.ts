@@ -3342,6 +3342,21 @@ function armDeadVideoWatchdog() {
         return
       }
     }
+    // Before giving up on this channel, make sure the address we are using is this session's:
+    // once per channel per run, refresh the playlist (the origin rewrites provider session
+    // paths to stable ones) and let the next attempt use the fresh address.
+    try {
+      const key = `xt_refresh_tried:${ctx.streamId}`
+      if (!sessionStorage.getItem(key)) {
+        sessionStorage.setItem(key, "1")
+        const { refreshActive } = await import("@/scripts/lib/creds.js")
+        await refreshActive()
+        log.info("[xt:livetv] refreshed the catalog after a failure", { streamId: ctx.streamId })
+      }
+    } catch (err) {
+      log.warn("[xt:livetv] catalog refresh after failure failed:", err)
+    }
+
     // Nothing was decoded: on Android the device's own player may still handle it (HEVC in
     // WebView's MSE usually cannot, ExoPlayer usually can). Try that before calling it broken.
     if (androidNativePlayerAvailable && !ctx.nativeFallbackTried) {

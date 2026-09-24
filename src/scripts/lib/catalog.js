@@ -41,7 +41,10 @@ import { retryWithBackoff, HttpRetryError } from "@/scripts/lib/retry.ts"
 import { applyLiveOverrides } from "@/scripts/lib/live-catalog.ts"
 import { log } from "@/scripts/lib/log.js"
 
-export const CHANNELS_TTL_MS = 24 * 60 * 60 * 1000
+// Live channel addresses are not static: a provider's session paths die, and the origin
+// rewrites them. A day-long cache meant a player could keep using yesterday's addresses —
+// the reconnect loop the operator reported. Thirty minutes keeps the list fresh.
+export const CHANNELS_TTL_MS = 30 * 60 * 1000
 export const VOD_TTL_MS = 24 * 60 * 60 * 1000
 export const SERIES_TTL_MS = 24 * 60 * 60 * 1000
 
