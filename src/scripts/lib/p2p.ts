@@ -290,7 +290,9 @@ function ensureChip(): HTMLElement | null {
     const el = document.createElement("div")
     el.id = "xt-p2p-chip"
     el.style.cssText =
-      "position:absolute;left:8px;bottom:8px;z-index:40;padding:2px 9px;border-radius:999px;" +
+      // TOP-left on purpose: the play/pause button lives bottom-left, and a readout that
+      // swallows those taps is worse than no readout at all.
+      "position:absolute;left:8px;top:8px;z-index:40;padding:2px 8px;border-radius:999px;" +
       "background:rgba(0,0,0,.55);color:#fff;font:600 11px/1.7 system-ui,-apple-system,sans-serif;" +
       "pointer-events:auto;cursor:pointer;opacity:.85;white-space:nowrap;transition:opacity .8s ease"
     el.textContent = "P2P: ?"

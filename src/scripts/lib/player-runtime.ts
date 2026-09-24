@@ -1800,6 +1800,50 @@ async function mountVideoJs(
     },
   }) as any
 
+  // Fullscreen. The Android shell's WebView does not implement the Fullscreen API, so the
+  // player's own fullscreen button did nothing there. An immersive CSS mode (all app chrome
+  // hidden, picture fills the screen) plus a Tauri window request covers both worlds.
+  const setImmersive = (on: boolean) => {
+    try {
+      document.documentElement.classList.toggle("xt-immersive", on)
+      document.body.classList.toggle("xt-immersive", on)
+    } catch {}
+    void (async () => {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window")
+        await getCurrentWindow().setFullscreen(on)
+      } catch {
+        /* not a desktop shell, or the API is unavailable — the CSS mode still applies */
+      }
+    })()
+  }
+  try {
+    player.on("fullscreenchange", () => {
+      const native = !!(document.fullscreenElement || (document as any).webkitFullscreenElement)
+      setImmersive(native || !!player.isFullscreen?.())
+    })
+    const onFsError = () => {
+      // The request was refused: fall back to the immersive view rather than nothing at all.
+      setImmersive(true)
+      window.setTimeout(() => setImmersive(false), 60_000)
+    }
+    player.on("fullscreenerror", onFsError)
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") setImmersive(false)
+    })
+  } catch {
+    /* a player without fullscreen support keeps its default behaviour */
+  }
+  try {
+    const style = document.createElement("style")
+    style.textContent =
+      "html.xt-immersive,body.xt-immersive{overflow:hidden!important}" +
+      "body.xt-immersive>*:not(#player-wrap):not(.vjs-fullscreen){display:none!important}" +
+      "body.xt-immersive #player-wrap,body.xt-immersive #player{position:fixed!important;inset:0!important;" +
+      "width:100vw!important;height:100vh!important;margin:0!important;z-index:9999!important;background:#000}"
+    document.head.appendChild(style)
+  } catch {}
+
   // Android (and any pinch-zoom that resizes the player): keep the bar out of the picture.
   try {
     const hideBarSoon = () => {
