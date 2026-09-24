@@ -1806,18 +1806,44 @@ async function mountVideoJs(
   // Fullscreen. The Android shell's WebView does not implement the Fullscreen API, so the
   // player's own fullscreen button did nothing there. An immersive CSS mode (all app chrome
   // hidden, picture fills the screen) plus a Tauri window request covers both worlds.
-  // The wrap that actually holds the picture: never hide an ancestor of it (that is what made
-  // the screen go white with the audio still running).
-  const immersiveTarget = () =>
-    (document.getElementById("player-wrap") as HTMLElement | null) ||
-    (document.querySelector("video")?.closest("div") as HTMLElement | null) ||
-    null
+  // FULLSCREEN ON ANDROID: reparent the player into a body-level overlay.
+  // Patching classes onto an ancestor failed twice here (first it hid the picture, then the
+  // picture only grew inside the app's card because an ancestor carried a transform and clipped
+  // a position:fixed element). Moving the player out of that tree cannot be clipped by anything.
+  let fsHome: { parent: HTMLElement; before: Node | null } | null = null
+  const playerEl = () => {
+    try {
+      return (player.el() as HTMLElement) || (document.getElementById("player") as HTMLElement | null)
+    } catch {
+      return document.getElementById("player") as HTMLElement | null
+    }
+  }
   const setImmersive = (on: boolean) => {
     try {
       document.documentElement.classList.toggle("xt-immersive", on)
       document.body.classList.toggle("xt-immersive", on)
-      const target = immersiveTarget()
-      if (target) target.classList.toggle("xt-immersive-wrap", on)
+      const el = playerEl()
+      if (!el) return
+      if (on) {
+        if (!fsHome && el.parentElement) {
+          fsHome = { parent: el.parentElement, before: el.nextSibling }
+        }
+        let layer = document.getElementById("xt-fs-layer")
+        if (!layer) {
+          layer = document.createElement("div")
+          layer.id = "xt-fs-layer"
+          document.body.appendChild(layer)
+        }
+        if (el.parentElement !== layer) layer.appendChild(el)
+        el.classList.add("xt-immersive-wrap")
+      } else {
+        el.classList.remove("xt-immersive-wrap")
+        const home = fsHome
+        fsHome = null
+        if (home && home.parent) home.parent.insertBefore(el, home.before)
+        const layer = document.getElementById("xt-fs-layer")
+        if (layer && !layer.childElementCount) layer.remove()
+      }
     } catch {}
     void (async () => {
       try {
@@ -1880,13 +1906,14 @@ async function mountVideoJs(
   try {
     const style = document.createElement("style")
     style.textContent =
-      // Nothing is hidden: the picture's own wrapper is lifted over the app and stretched. An
-      // ancestor can never be removed from the layout this way.
-      "html.xt-immersive,body.xt-immersive{overflow:hidden!important;background:#000!important}" +
-      ".xt-immersive-wrap{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;" +
-      "margin:0!important;padding:0!important;border-radius:0!important;background:#000!important;z-index:2147483000!important}" +
-      ".xt-immersive-wrap video,.xt-immersive-wrap .video-js,.xt-immersive-wrap .vjs-tech{" +
-      "width:100%!important;height:100%!important;max-width:none!important;max-height:none!important}"
+      // The layer sits above the app; the player fills it; nothing is hidden, so the picture
+      // cannot vanish the way it did when an ancestor was taken out of the layout.
+      "#xt-fs-layer{position:fixed!important;top:0!important;left:0!important;right:0!important;bottom:0!important;" +
+      "width:100vw!important;height:100vh!important;background:#000!important;z-index:2147483000!important}" +
+      "#xt-fs-layer .xt-immersive-wrap,#xt-fs-layer video,#xt-fs-layer .video-js,#xt-fs-layer .vjs-tech{" +
+      "position:relative!important;width:100%!important;height:100%!important;max-width:none!important;" +
+      "max-height:none!important;margin:0!important;padding:0!important;border-radius:0!important}" +
+      "html.xt-immersive,body.xt-immersive{overflow:hidden!important;background:#000!important}"
     document.head.appendChild(style)
   } catch {}
 
