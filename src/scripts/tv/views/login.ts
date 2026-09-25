@@ -38,6 +38,13 @@ interface Refs {
   statusEl: HTMLElement
   cancelBtn: HTMLButtonElement
   connectBtn: HTMLButtonElement
+  // Star sign-in (this operator's own service) — the TV counterpart of the "Star nalog"
+  // card the phone page has carried since the operator build.
+  starCode: HTMLInputElement
+  starUser: HTMLInputElement
+  starPass: HTMLInputElement
+  starBtn: HTMLButtonElement
+  starMsg: HTMLElement
 }
 
 const TV_INPUT_CLASS =
@@ -93,6 +100,41 @@ function buildMarkup(): string {
             Paste a playlist link, or enter your provider's details below.
           </p>
         </header>
+
+        <!-- Star sign-in: THIS deployment's own service. Pairing code + account; the origin
+             answers with that account's playlist URL. Kept at the TOP, above the generic
+             Xtream/M3U methods, because it is the normal path for this build — the phone page
+             has had this card all along and the TV view was missing it, which left a
+             television with no way to reach our panel at all. -->
+        <section class="rounded-2xl border border-line bg-surface p-5">
+          <h2 class="text-base font-semibold uppercase tracking-wider text-fg-3">Star nalog</h2>
+          <p class="mt-1 text-sm leading-relaxed text-fg-3">
+            Upiši paring kod svog servisa, pa korisničko ime i lozinku.
+          </p>
+          <div class="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
+            <label class="flex flex-col gap-2">
+              <span class="${TV_LABEL_CLASS}">Paring kod</span>
+              <input data-role="star-code" data-focus-key="star:code" type="text"
+                     autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX-XXXX"
+                     class="${TV_INPUT_CLASS}" />
+            </label>
+            <label class="flex flex-col gap-2">
+              <span class="${TV_LABEL_CLASS}">Korisnik</span>
+              <input data-role="star-user" data-focus-key="star:user" type="text"
+                     autocomplete="off" spellcheck="false" class="${TV_INPUT_CLASS}" />
+            </label>
+            <label class="flex flex-col gap-2">
+              <span class="${TV_LABEL_CLASS}">Lozinka</span>
+              <input data-role="star-pass" data-focus-key="star:pass" type="password"
+                     autocomplete="current-password" class="${TV_INPUT_CLASS}" />
+            </label>
+          </div>
+          <div class="mt-4 flex flex-wrap items-center gap-3">
+            <button type="button" data-role="star-signin" data-focus-key="star:signin"
+                    class="btn-primary min-h-11 px-8 text-base tv-focus-inset">Prijavi se</button>
+            <span data-role="star-msg" class="text-sm text-fg-3" role="status" aria-live="polite"></span>
+          </div>
+        </section>
 
         <div role="tablist" class="grid grid-cols-2 gap-2 rounded-2xl border border-line bg-surface p-1.5">
           <button type="button" data-role="method-xtream" role="tab" data-focus-key="method:xtream" data-tv-autofocus
@@ -205,6 +247,11 @@ function collectRefs(root: HTMLElement): Refs {
     statusEl: query("status"),
     cancelBtn: query("cancel"),
     connectBtn: query("connect"),
+    starCode: query("star-code"),
+    starUser: query("star-user"),
+    starPass: query("star-pass"),
+    starBtn: query("star-signin"),
+    starMsg: query("star-msg"),
   }
 }
 
@@ -224,6 +271,135 @@ const view: TvView = {
     root.innerHTML = buildMarkup()
     applyI18nDOM(root)
     const refs = collectRefs(root)
+
+    // ---- Star sign-in (our own service) ------------------------------------------------
+    // The same flow the phone page runs: POST {code, username, password, deviceId, label} to
+    // the origin, which checks the pairing code with the panel, signs the account in and
+    // answers with a per-account playlist URL. That URL is saved as an M3U entry (the player
+    // path every other method uses) and the viewer lands on the live screen.
+    const STAR_ORIGIN = "https://hardrockradio.net:8443"
+    const starSay = (text: string) => {
+      if (refs.starMsg) refs.starMsg.textContent = text
+    }
+    // A stable id for THIS installation, so the panel lists the television as a device of the
+    // account (its device cap applies here exactly as it does to a phone).
+    const starDeviceId = () => {
+      try {
+        let id = localStorage.getItem("xt_star_device")
+        if (!id) {
+          id = "app-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
+          localStorage.setItem("xt_star_device", id)
+        }
+        return id
+      } catch {
+        return "app-unknown"
+      }
+    }
+    const starDeviceLabel = () => {
+      const ua = navigator.userAgent || ""
+      const platform = /Android/i.test(ua)
+        ? /TV|Braille|AFT|Box/i.test(ua)
+          ? "Android TV"
+          : "Android"
+        : /Windows/i.test(ua)
+          ? "Windows"
+          : /Macintosh/i.test(ua)
+            ? "macOS"
+            : /Linux/i.test(ua)
+              ? "Linux"
+              : "Web"
+      return "Star Xtream · " + platform
+    }
+    let starBusy = false
+    async function starSignIn () {
+      if (starBusy) return
+      const code = (refs.starCode?.value || "").trim()
+      const username = (refs.starUser?.value || "").trim()
+      const password = refs.starPass?.value || ""
+      if (!code || !username || !password) {
+        starSay("Upiši kod, korisnika i lozinku.")
+        return
+      }
+      starBusy = true
+      refs.starBtn.disabled = true
+      starSay("Provjeravam nalog…")
+      try {
+        const res = await fetch(STAR_ORIGIN + "/login", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            code,
+            username,
+            password,
+            deviceId: starDeviceId(),
+            label: starDeviceLabel(),
+          }),
+        })
+        const data = await res.json().catch(() => null)
+        if (!res.ok || !data || !data.playlist) {
+          const reason = (data && data.error) || "greska"
+          starSay(
+            reason === "bad-code"
+              ? "Paring kod nije tačan."
+              : reason === "expired"
+                ? "Nalog je istekao."
+                : reason === "disabled"
+                  ? "Nalog je isključen."
+                  : reason === "invalid credentials"
+                    ? "Pogrešan korisnik ili lozinka."
+                    : "Prijava nije prošla (" + reason + ")."
+          )
+          return
+        }
+        const saved = await addEntry({
+          type: "m3u",
+          title: username,
+          emoji: "",
+          accent: "",
+          url: data.playlist,
+          epgUrl: "",
+          additionalEpgUrls: [],
+        })
+        try {
+          localStorage.setItem("xt_star_user", username)
+          // A sign-in is how a device the operator closed comes back.
+          localStorage.removeItem("xt_blocked")
+        } catch {}
+        starSay("Prijava uspješna · " + (data.channels || 0) + " kanala.")
+        toastSuccess("Prijava uspješna")
+        if (saved && (saved as { _id?: string })._id) {
+          try {
+            const { warmupActive } = await import("@/scripts/lib/catalog.js")
+            await warmupActive((saved as { _id: string })._id, { force: true })
+          } catch {}
+        }
+        navigate("/tv/live")
+      } catch {
+        starSay("Server nije dostupan — provjeri internet.")
+      } finally {
+        starBusy = false
+        if (refs.starBtn) refs.starBtn.disabled = false
+      }
+    }
+    refs.starBtn?.addEventListener("click", (event) => {
+      event.preventDefault()
+      starSignIn()
+    })
+    refs.starPass?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault()
+        starSignIn()
+      }
+    })
+    refs.starCode?.addEventListener("input", (event) => {
+      const el = event.target as HTMLInputElement
+      const clean = String(el.value).toUpperCase().replace(/[^0-9A-Z]/g, "").slice(0, 12)
+      el.value = clean.replace(/(.{4})(?=.)/g, "$1-")
+    })
+    try {
+      const lastUser = localStorage.getItem("xt_star_user")
+      if (lastUser && refs.starUser) refs.starUser.value = lastUser
+    } catch {}
 
     let method: Method = "xtream"
     let passwordVisible = false
