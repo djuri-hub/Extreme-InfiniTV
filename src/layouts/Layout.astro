@@ -127,14 +127,20 @@ const appMode = import.meta.env.PUBLIC_APP_MODE || ""
         if (perfStored === "1") {
           document.documentElement.setAttribute("data-perf-mode", "on");
         }
-        if (receiverStored === null && isTvDevice) {
-          localStorage.setItem("xt_receiver_mode", "1");
-          localStorage.setItem("xt_receiver_mode_auto", "1");
-        }
-        if (receiverBootStored === null && isTvDevice) {
-          localStorage.setItem("xt_receiver_boot", "1");
-          localStorage.setItem("xt_receiver_boot_auto", "1");
-        }
+        // --- Receiver mode is OPT-IN on a television now ----------------------------------
+        // It used to be auto-enabled on every TV, and the effect was that a fresh set booted
+        // straight into the receiver screen — an address on screen, waiting for a phone —
+        // and never reached the sign-in. That reads as a broken app until the viewer finds
+        // "Exit receiver", which is exactly what happened on the operator's Fire Stick. A
+        // television is now an ordinary player that casts when asked; the Settings toggle
+        // still turns receiver mode on, and because only THIS block writes the *_auto
+        // markers, a deliberate choice there is never overridden.
+        try {
+          if (localStorage.getItem("xt_receiver_mode_auto") === "1") {
+            localStorage.setItem("xt_receiver_mode", "0");
+            localStorage.setItem("xt_receiver_boot", "0");
+          }
+        } catch (e) {}
 
         // Boot straight into the receiver screen when enabled, unless the user exited it this session
         try {

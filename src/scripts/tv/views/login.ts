@@ -6,7 +6,7 @@ import { addEntry, getEntries, resolveServerScheme, resolveM3UScheme } from "@/s
 import { parsePlaylistLinks, type ParsedXtreamCandidate } from "@/scripts/lib/playlist-link"
 import { toastSuccess, toastWarn } from "@/scripts/lib/toast"
 
-type Method = "xtream" | "m3u"
+type Method = "star" | "xtream" | "m3u"
 
 interface XtreamTestResult {
   status: "active" | "expired" | "inactive" | "unavailable"
@@ -24,9 +24,11 @@ interface Refs {
   form: HTMLFormElement
   methodXtream: HTMLButtonElement
   methodM3u: HTMLButtonElement
+  methodStar: HTMLButtonElement
   pasteInput: HTMLInputElement
   mirrorHint: HTMLElement
   xtreamFields: HTMLElement
+  starFields: HTMLElement
   serverUrlInput: HTMLInputElement
   usernameInput: HTMLInputElement
   passwordInput: HTMLInputElement
@@ -43,7 +45,6 @@ interface Refs {
   starCode: HTMLInputElement
   starUser: HTMLInputElement
   starPass: HTMLInputElement
-  starBtn: HTMLButtonElement
   starMsg: HTMLElement
 }
 
@@ -101,17 +102,31 @@ function buildMarkup(): string {
           </p>
         </header>
 
-        <!-- Star sign-in: THIS deployment's own service. Pairing code + account; the origin
-             answers with that account's playlist URL. Kept at the TOP, above the generic
-             Xtream/M3U methods, because it is the normal path for this build — the phone page
-             has had this card all along and the TV view was missing it, which left a
-             television with no way to reach our panel at all. -->
-        <section class="rounded-2xl border border-line bg-surface p-5">
-          <h2 class="text-base font-semibold uppercase tracking-wider text-fg-3">Star nalog</h2>
-          <p class="mt-1 text-sm leading-relaxed text-fg-3">
-            Upiši paring kod svog servisa, pa korisničko ime i lozinku.
-          </p>
-          <div class="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
+        <div role="tablist" class="grid grid-cols-3 gap-2 rounded-2xl border border-line bg-surface p-1.5">
+          <!-- Star sign-in FIRST: this deployment's own service, and the normal path for this
+               build. It is a tab rather than a card of its own so its fields sit exactly where
+               the other methods' fields sit — a television's focus/scroll machinery then treats
+               it like every other field, which a card placed above the tabs did not (it landed
+               off the visible area and could not be typed into). -->
+          <button type="button" data-role="method-star" role="tab" data-focus-key="method:star" data-tv-autofocus
+                  class="flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-xl px-4 text-center outline-none transition-colors">
+            <span class="text-base font-medium">Star nalog</span>
+            <span class="text-xs font-medium uppercase tracking-wider opacity-70">Paring kod</span>
+          </button>
+          <button type="button" data-role="method-xtream" role="tab" data-focus-key="method:xtream"
+                  class="flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-xl px-4 text-center outline-none transition-colors">
+            <span data-i18n="login.tab.subscription" class="text-base font-medium">I have a subscription</span>
+            <span data-i18n="login.tab.subscription.sub" class="text-xs font-medium uppercase tracking-wider opacity-70">Xtream Codes</span>
+          </button>
+          <button type="button" data-role="method-m3u" role="tab" data-focus-key="method:m3u"
+                  class="flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-xl px-4 text-center outline-none transition-colors">
+            <span data-i18n="login.tab.url" class="text-base font-medium">I have a playlist URL</span>
+            <span data-i18n="login.tab.url.sub" class="text-xs font-medium uppercase tracking-wider opacity-70">M3U / M3U8</span>
+          </button>
+        </div>
+
+        <form data-role="form" class="flex flex-col gap-4" autocomplete="off">
+          <div data-role="star-fields" class="flex flex-col gap-4">
             <label class="flex flex-col gap-2">
               <span class="${TV_LABEL_CLASS}">Paring kod</span>
               <input data-role="star-code" data-focus-key="star:code" type="text"
@@ -128,28 +143,9 @@ function buildMarkup(): string {
               <input data-role="star-pass" data-focus-key="star:pass" type="password"
                      autocomplete="current-password" class="${TV_INPUT_CLASS}" />
             </label>
+            <p data-role="star-msg" class="text-sm leading-relaxed text-fg-3" role="status" aria-live="polite"></p>
           </div>
-          <div class="mt-4 flex flex-wrap items-center gap-3">
-            <button type="button" data-role="star-signin" data-focus-key="star:signin"
-                    class="btn-primary min-h-11 px-8 text-base tv-focus-inset">Prijavi se</button>
-            <span data-role="star-msg" class="text-sm text-fg-3" role="status" aria-live="polite"></span>
-          </div>
-        </section>
 
-        <div role="tablist" class="grid grid-cols-2 gap-2 rounded-2xl border border-line bg-surface p-1.5">
-          <button type="button" data-role="method-xtream" role="tab" data-focus-key="method:xtream" data-tv-autofocus
-                  class="flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-xl px-4 text-center outline-none transition-colors">
-            <span data-i18n="login.tab.subscription" class="text-base font-medium">I have a subscription</span>
-            <span data-i18n="login.tab.subscription.sub" class="text-xs font-medium uppercase tracking-wider opacity-70">Xtream Codes</span>
-          </button>
-          <button type="button" data-role="method-m3u" role="tab" data-focus-key="method:m3u"
-                  class="flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-xl px-4 text-center outline-none transition-colors">
-            <span data-i18n="login.tab.url" class="text-base font-medium">I have a playlist URL</span>
-            <span data-i18n="login.tab.url.sub" class="text-xs font-medium uppercase tracking-wider opacity-70">M3U / M3U8</span>
-          </button>
-        </div>
-
-        <form data-role="form" class="flex flex-col gap-4" autocomplete="off">
           <label class="flex flex-col gap-2">
             <span data-i18n="tv.login.field.pasteLink" class="${TV_LABEL_CLASS}">Paste a playlist link</span>
             <input data-role="paste" data-focus-key="paste" type="text"
@@ -233,9 +229,11 @@ function collectRefs(root: HTMLElement): Refs {
     form: query("form"),
     methodXtream: query("method-xtream"),
     methodM3u: query("method-m3u"),
+    methodStar: query("method-star"),
     pasteInput: query("paste"),
     mirrorHint: query("mirror-hint"),
     xtreamFields: query("xtream-fields"),
+    starFields: query("star-fields"),
     serverUrlInput: query("server-url"),
     usernameInput: query("username"),
     passwordInput: query("password"),
@@ -250,7 +248,6 @@ function collectRefs(root: HTMLElement): Refs {
     starCode: query("star-code"),
     starUser: query("star-user"),
     starPass: query("star-pass"),
-    starBtn: query("star-signin"),
     starMsg: query("star-msg"),
   }
 }
@@ -321,7 +318,6 @@ const view: TvView = {
         return
       }
       starBusy = true
-      refs.starBtn.disabled = true
       starSay("Provjeravam nalog…")
       try {
         const res = await fetch(STAR_ORIGIN + "/login", {
@@ -378,13 +374,8 @@ const view: TvView = {
         starSay("Server nije dostupan — provjeri internet.")
       } finally {
         starBusy = false
-        if (refs.starBtn) refs.starBtn.disabled = false
       }
     }
-    refs.starBtn?.addEventListener("click", (event) => {
-      event.preventDefault()
-      starSignIn()
-    })
     refs.starPass?.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault()
@@ -401,7 +392,9 @@ const view: TvView = {
       if (lastUser && refs.starUser) refs.starUser.value = lastUser
     } catch {}
 
-    let method: Method = "xtream"
+    // A television opens on THIS operator's own sign-in (the Star tab). The generic Xtream
+    // and M3U methods stay one tab away for anyone who needs them.
+    let method: Method = "star"
     let passwordVisible = false
     let busy = false
     let destroyed = false
@@ -409,6 +402,9 @@ const view: TvView = {
     let pendingMirrors: ParsedXtreamCandidate[] = []
 
     function paintMethodButtons(): void {
+      refs.methodStar.className =
+        "flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-xl px-4 text-center outline-none transition-colors tv-focus-inset " +
+        (method === "star" ? ACTIVE_METHOD_CLASS : IDLE_METHOD_CLASS)
       refs.methodXtream.className =
         "flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-xl px-4 text-center outline-none transition-colors tv-focus-inset " +
         (method === "xtream" ? ACTIVE_METHOD_CLASS : IDLE_METHOD_CLASS)
@@ -417,11 +413,14 @@ const view: TvView = {
         (method === "m3u" ? ACTIVE_METHOD_CLASS : IDLE_METHOD_CLASS)
       refs.methodXtream.setAttribute("aria-selected", String(method === "xtream"))
       refs.methodM3u.setAttribute("aria-selected", String(method === "m3u"))
+      refs.methodStar.setAttribute("aria-selected", String(method === "star"))
     }
 
     function setMethod(next: Method): void {
       if (method === next) return
       method = next
+      refs.starFields.classList.toggle("hidden", next !== "star")
+      refs.starFields.classList.toggle("flex", next === "star")
       refs.xtreamFields.classList.toggle("hidden", next !== "xtream")
       refs.xtreamFields.classList.toggle("flex", next === "xtream")
       refs.m3uFields.classList.toggle("hidden", next !== "m3u")
@@ -444,7 +443,8 @@ const view: TvView = {
     }
 
     function focusFirstField(): void {
-      const target = method === "xtream" ? refs.serverUrlInput : refs.m3uUrlInput
+      const target =
+        method === "star" ? refs.starCode : method === "xtream" ? refs.serverUrlInput : refs.m3uUrlInput
       target?.focus()
     }
 
@@ -579,7 +579,8 @@ const view: TvView = {
       if (busy) return
       setBusy(true)
       try {
-        if (method === "xtream") await connectXtream()
+        if (method === "star") await starSignIn()
+        else if (method === "xtream") await connectXtream()
         else await connectM3U()
       } catch (error) {
         if (!destroyed) setStatus("unavailable", String((error as Error)?.message || error))
@@ -608,6 +609,7 @@ const view: TvView = {
 
     refs.methodXtream.addEventListener("click", () => setMethod("xtream"))
     refs.methodM3u.addEventListener("click", () => setMethod("m3u"))
+    refs.methodStar.addEventListener("click", () => setMethod("star"))
     refs.pasteInput.addEventListener("input", onPasteInput)
     refs.togglePasswordBtn.addEventListener("click", togglePasswordVisibility)
     refs.cancelBtn.addEventListener("click", () => void onCancelClick())
