@@ -571,6 +571,9 @@ const view: TvView = {
     async function onConnect(event: Event): Promise<void> {
       event.preventDefault()
       if (busy) return
+      // A link typed into the paste field (and never "committed" with a blur) still has to be
+      // honoured when the viewer presses Connect.
+      if (refs.pasteInput.value.trim() && (method === "xtream" || method === "m3u")) onPasteInput()
       setBusy(true)
       try {
         if (method === "star") await starSignIn()
@@ -604,7 +607,13 @@ const view: TvView = {
     refs.methodXtream.addEventListener("click", () => setMethod("xtream"))
     refs.methodM3u.addEventListener("click", () => setMethod("m3u"))
     refs.methodStar.addEventListener("click", () => setMethod("star"))
-    refs.pasteInput.addEventListener("input", onPasteInput)
+    // Parse the pasted link when the field is DONE, never on every keystroke. The live parser
+    // this replaces fired while the viewer was typing: as soon as the text looked like a link
+    // it switched methods and rewrote the other fields, which on a television reads as the
+    // screen throwing the viewer around — and this field is the only place on the Add-playlist
+    // screen that reacts to typing at all (search and the other views type normally).
+    refs.pasteInput.addEventListener("change", onPasteInput)
+    refs.pasteInput.addEventListener("blur", onPasteInput)
     refs.togglePasswordBtn.addEventListener("click", togglePasswordVisibility)
     refs.cancelBtn.addEventListener("click", () => void onCancelClick())
     refs.form.addEventListener("submit", (event) => void onConnect(event))
