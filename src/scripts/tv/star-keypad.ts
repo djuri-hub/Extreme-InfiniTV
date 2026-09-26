@@ -36,8 +36,12 @@ const ROWS: string[][] = [
   ["z", "x", "c", "v", "b", "n", "m", ".", "-", "_"],
 ]
 
+// The highlight is drawn from DOM :focus, not from a class this module toggles — the app's
+// own spatial navigation also moves focus, and whichever of the two moves it, the viewer must
+// SEE where the cursor is. (Reported: "I can't see which letter I'm on — I type from memory.")
 const KEY_CLASS =
-  "flex min-h-11 min-w-11 items-center justify-center rounded-xl border border-line bg-surface-2 px-2 text-lg font-semibold text-fg outline-none transition-colors"
+  "flex min-h-14 min-w-14 items-center justify-center rounded-xl border border-line bg-surface-2 px-2 text-xl font-semibold text-fg outline-none transition-colors " +
+  "focus:bg-accent-soft focus:text-accent focus:ring-2 focus:ring-accent focus:border-accent"
 
 export function mountStarKeypad(root: HTMLElement, config: KeypadConfig): Keypad {
   const values: Record<KeypadField, string> = {
@@ -71,6 +75,9 @@ export function mountStarKeypad(root: HTMLElement, config: KeypadConfig): Keypad
     b.type = "button"
     b.className = KEY_CLASS + (extraClass ? " " + extraClass : "")
     b.textContent = label
+    // A focus key makes the app's own spatial navigation treat this as a first-class item
+    // (and give it its own focus ring, which is what every other screen relies on).
+    b.setAttribute("data-focus-key", "kp:" + label.toLowerCase().replace(/\s+/g, "-"))
     b.addEventListener("click", (event) => {
       event.preventDefault()
       event.stopPropagation()
@@ -203,6 +210,7 @@ export function mountStarKeypad(root: HTMLElement, config: KeypadConfig): Keypad
     open = false
     overlay.classList.add("hidden")
     overlay.classList.remove("flex")
+    for (const child of Array.from(root.children)) child.removeAttribute("inert")
     if (done) config.onDone({ ...values })
     renderValue()
   }
@@ -214,6 +222,11 @@ export function mountStarKeypad(root: HTMLElement, config: KeypadConfig): Keypad
     renderValue()
     overlay.classList.remove("hidden")
     overlay.classList.add("flex")
+    // Nothing behind the keyboard may take focus: with every other child inert, both this
+    // module's cursor and the app's spatial navigation stay inside the key grid.
+    for (const child of Array.from(root.children)) {
+      if (child !== overlay) child.setAttribute("inert", "")
+    }
     highlight()
   }
 
