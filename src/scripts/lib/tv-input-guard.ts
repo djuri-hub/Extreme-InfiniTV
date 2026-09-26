@@ -105,17 +105,36 @@ export function mountTvInputGuard(): void {
   window.addEventListener("focusout", (event) => {
     const target = event.target
     if (!(target instanceof HTMLElement) || !isGuardedElement(target)) return
+    // A focusout into NOTHING is the keyboard itself taking focus. Android TV sets (Fire OS
+    // included) open their keyboard in a separate window, so the page sees the input lose
+    // focus the moment the IME appears — exiting edit mode there closed the keyboard under
+    // the viewer's fingers ("I start typing and it throws me out"), on this app's own fields
+    // as well as any added later. Only a move to ANOTHER element ends editing; the BACK key
+    // is handled by the viewport signal below and by Escape.
+    if (event.relatedTarget == null) return
     exitEditMode(target)
   })
 
-  // BACK closes the IME inside the keyboard window, invisible to the page; the
-  // viewport growing back to full height is the only reliable closure signal.
+  // BACK closes the IME inside the keyboard window, invisible to the page; the viewport
+  // coming BACK to full height is the closure signal — but only once the viewport has been
+  // OBSERVED to shrink. On a set whose keyboard opens in its own window (Fire OS) it never
+  // shrinks, and the old rule read the first resize as "keyboard gone" and closed it while
+  // the viewer was still typing.
   const viewport = window.visualViewport
   if (viewport) {
     let maxViewportHeight = viewport.height
+    let sawShrink = false
     viewport.addEventListener("resize", () => {
-      if (viewport.height > maxViewportHeight) maxViewportHeight = viewport.height
-      if (viewport.height < maxViewportHeight - 40) return
+      if (viewport.height < maxViewportHeight - 40) {
+        sawShrink = true
+        return
+      }
+      if (viewport.height > maxViewportHeight) {
+        maxViewportHeight = viewport.height
+        return
+      }
+      if (!sawShrink) return
+      sawShrink = false
       const active = document.activeElement
       if (active instanceof HTMLElement && isGuardedElement(active) && isEditing(active)) {
         exitEditMode(active)
