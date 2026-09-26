@@ -28,7 +28,6 @@ interface Refs {
   pasteInput: HTMLInputElement
   mirrorHint: HTMLElement
   xtreamFields: HTMLElement
-  starFields: HTMLElement
   serverUrlInput: HTMLInputElement
   usernameInput: HTMLInputElement
   passwordInput: HTMLInputElement
@@ -40,12 +39,6 @@ interface Refs {
   statusEl: HTMLElement
   cancelBtn: HTMLButtonElement
   connectBtn: HTMLButtonElement
-  // Star sign-in (this operator's own service) — the TV counterpart of the "Star nalog"
-  // card the phone page has carried since the operator build.
-  starCode: HTMLInputElement
-  starUser: HTMLInputElement
-  starPass: HTMLInputElement
-  starMsg: HTMLElement
 }
 
 const TV_INPUT_CLASS =
@@ -126,29 +119,6 @@ function buildMarkup(): string {
         </div>
 
         <form data-role="form" class="flex flex-col gap-4" autocomplete="off">
-          <div data-role="star-fields" class="flex flex-col gap-4">
-            <label class="flex flex-col gap-2">
-              <!-- This operator's service code, pre-filled: it is not a secret (it is printed
-                   on the download page) and a television remote should not have to type it. -->
-              <span class="${TV_LABEL_CLASS}">Paring kod (već upisan)</span>
-              <input data-role="star-code" data-focus-key="star:code" type="text"
-                     autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX-XXXX"
-                     value="HZ7G-50XV-P3X1"
-                     class="${TV_INPUT_CLASS}" />
-            </label>
-            <label class="flex flex-col gap-2">
-              <span class="${TV_LABEL_CLASS}">Korisnik</span>
-              <input data-role="star-user" data-focus-key="star:user" type="text"
-                     autocomplete="off" spellcheck="false" class="${TV_INPUT_CLASS}" />
-            </label>
-            <label class="flex flex-col gap-2">
-              <span class="${TV_LABEL_CLASS}">Lozinka</span>
-              <input data-role="star-pass" data-focus-key="star:pass" type="password"
-                     autocomplete="current-password" class="${TV_INPUT_CLASS}" />
-            </label>
-            <p data-role="star-msg" class="text-sm leading-relaxed text-fg-3" role="status" aria-live="polite"></p>
-          </div>
-
           <label class="flex flex-col gap-2">
             <span data-i18n="tv.login.field.pasteLink" class="${TV_LABEL_CLASS}">Paste a playlist link</span>
             <input data-role="paste" data-focus-key="paste" type="text"
@@ -236,7 +206,6 @@ function collectRefs(root: HTMLElement): Refs {
     pasteInput: query("paste"),
     mirrorHint: query("mirror-hint"),
     xtreamFields: query("xtream-fields"),
-    starFields: query("star-fields"),
     serverUrlInput: query("server-url"),
     usernameInput: query("username"),
     passwordInput: query("password"),
@@ -248,10 +217,6 @@ function collectRefs(root: HTMLElement): Refs {
     statusEl: query("status"),
     cancelBtn: query("cancel"),
     connectBtn: query("connect"),
-    starCode: query("star-code"),
-    starUser: query("star-user"),
-    starPass: query("star-pass"),
-    starMsg: query("star-msg"),
   }
 }
 
@@ -273,13 +238,40 @@ const view: TvView = {
     const refs = collectRefs(root)
 
     // ---- Star sign-in (our own service) ------------------------------------------------
-    // The same flow the phone page runs: POST {code, username, password, deviceId, label} to
-    // the origin, which checks the pairing code with the panel, signs the account in and
-    // answers with a per-account playlist URL. That URL is saved as an M3U entry (the player
-    // path every other method uses) and the viewer lands on the live screen.
+    // Deliberately a MODE over the app's existing Xtream fields, not fields of its own. The
+    // first attempt added three inputs; on a television they sat in the wrong place and the
+    // remote's typing was hit-and-miss in a way this app's own fields never are — those are
+    // what the TV focus engine, the on-screen keyboard plumbing and the scroll observer were
+    // built around. So this tab borrows them: the same inputs, relabelled, with the submit
+    // routed to the origin's /login, whose per-account playlist URL is saved as an M3U entry.
     const STAR_ORIGIN = "https://hardrockradio.net:8443"
-    const starSay = (text: string) => {
-      if (refs.starMsg) refs.starMsg.textContent = text
+    // The operator's service code: an identifier, printed on the download page, never a
+    // secret. Pre-filled so a remote only has to type the account.
+    const STAR_SERVICE_CODE = "HZ7G-50XV-P3X1"
+    const STAR_LABELS = ["Paring kod", "Korisnik", "Lozinka"]
+    const xtreamLabelEls = Array.from(refs.xtreamFields.querySelectorAll<HTMLElement>("[data-i18n]"))
+    const xtreamLabelOriginals = xtreamLabelEls.map((el) => ({
+      i18n: el.getAttribute("data-i18n"),
+      text: el.textContent || "",
+    }))
+    function applyStarLabels(): void {
+      xtreamLabelEls.forEach((el, i) => {
+        el.removeAttribute("data-i18n")
+        el.textContent = STAR_LABELS[i] || ""
+      })
+      refs.serverUrlInput.setAttribute("placeholder", "XXXX-XXXX-XXXX")
+      refs.usernameInput.setAttribute("placeholder", "")
+      refs.passwordInput.setAttribute("placeholder", "")
+      if (!refs.serverUrlInput.value.trim()) refs.serverUrlInput.value = STAR_SERVICE_CODE
+    }
+    function restoreXtreamLabels(): void {
+      xtreamLabelEls.forEach((el, i) => {
+        const original = xtreamLabelOriginals[i]
+        if (original.i18n) el.setAttribute("data-i18n", original.i18n)
+        el.textContent = original.text
+      })
+      refs.serverUrlInput.setAttribute("placeholder", "example.com:8080")
+      if (refs.serverUrlInput.value.trim() === STAR_SERVICE_CODE) refs.serverUrlInput.value = ""
     }
     // A stable id for THIS installation, so the panel lists the television as a device of the
     // account (its device cap applies here exactly as it does to a phone).
@@ -313,23 +305,21 @@ const view: TvView = {
     let starBusy = false
     async function starSignIn () {
       if (starBusy) return
-      // Normalise the pairing code HERE, not while typing: the phone page rewrites the
-      // field on every keystroke (uppercase + dash mask), and against a television IME's
-      // composition state that shows characters the viewer never typed and can swallow
-      // input. While typing the field only drops separators; the dashes are added once.
-      const code = String(refs.starCode?.value || "")
+      // The pairing code lives in the first (relabelled) field. The dashes are added ONCE,
+      // here — never while typing, which is what made the remote's input look unreliable.
+      const code = String(refs.serverUrlInput.value || "")
         .toUpperCase()
         .replace(/[^0-9A-Z]/g, "")
         .slice(0, 12)
         .replace(/(.{4})(?=.)/g, "$1-")
-      const username = (refs.starUser?.value || "").trim()
-      const password = refs.starPass?.value || ""
+      const username = (refs.usernameInput.value || "").trim()
+      const password = refs.passwordInput.value || ""
       if (!code || !username || !password) {
-        starSay("Upiši kod, korisnika i lozinku.")
+        setStatus("busy", "Upiši kod, korisnika i lozinku.")
         return
       }
       starBusy = true
-      starSay("Provjeravam nalog…")
+      setStatus("busy", "Provjeravam nalog…")
       try {
         const res = await fetch(STAR_ORIGIN + "/login", {
           method: "POST",
@@ -345,7 +335,8 @@ const view: TvView = {
         const data = await res.json().catch(() => null)
         if (!res.ok || !data || !data.playlist) {
           const reason = (data && data.error) || "greska"
-          starSay(
+          setStatus(
+            "unavailable",
             reason === "bad-code"
               ? "Paring kod nije tačan."
               : reason === "expired"
@@ -372,7 +363,7 @@ const view: TvView = {
           // A sign-in is how a device the operator closed comes back.
           localStorage.removeItem("xt_blocked")
         } catch {}
-        starSay("Prijava uspješna · " + (data.channels || 0) + " kanala.")
+        setStatus("active", "Prijava uspješna · " + (data.channels || 0) + " kanala.")
         toastSuccess("Prijava uspješna")
         if (saved && (saved as { _id?: string })._id) {
           try {
@@ -382,25 +373,14 @@ const view: TvView = {
         }
         navigate("/tv/live")
       } catch {
-        starSay("Server nije dostupan — provjeri internet.")
+        setStatus("unavailable", "Server nije dostupan — provjeri internet.")
       } finally {
         starBusy = false
       }
     }
-    refs.starPass?.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault()
-        starSignIn()
-      }
-    })
-    refs.starCode?.addEventListener("input", (event) => {
-      const el = event.target as HTMLInputElement
-      // Case + separators only — no re-layout of the value under the IME's caret.
-      el.value = String(el.value).toUpperCase().replace(/[^0-9A-Z-]/g, "").slice(0, 14)
-    })
     try {
       const lastUser = localStorage.getItem("xt_star_user")
-      if (lastUser && refs.starUser) refs.starUser.value = lastUser
+      if (lastUser && !refs.usernameInput.value) refs.usernameInput.value = lastUser
     } catch {}
 
     // A television opens on THIS operator's own sign-in (the Star tab). The generic Xtream
@@ -430,12 +410,15 @@ const view: TvView = {
     function setMethod(next: Method): void {
       if (method === next) return
       method = next
-      refs.starFields.classList.toggle("hidden", next !== "star")
-      refs.starFields.classList.toggle("flex", next === "star")
-      refs.xtreamFields.classList.toggle("hidden", next !== "xtream")
-      refs.xtreamFields.classList.toggle("flex", next === "xtream")
+      // Star BORROWS the Xtream field block: the same inputs, relabelled. Nothing about the
+      // focus order, the keyboard or the scroll position changes between the two tabs.
+      const isStar = next === "star"
+      refs.xtreamFields.classList.toggle("hidden", !(isStar || next === "xtream"))
+      refs.xtreamFields.classList.toggle("flex", isStar || next === "xtream")
       refs.m3uFields.classList.toggle("hidden", next !== "m3u")
       refs.m3uFields.classList.toggle("flex", next === "m3u")
+      if (isStar) applyStarLabels()
+      else if (next === "xtream") restoreXtreamLabels()
       paintMethodButtons()
       clearStatus()
     }
@@ -455,7 +438,7 @@ const view: TvView = {
 
     function focusFirstField(): void {
       const target =
-        method === "star" ? refs.starCode : method === "xtream" ? refs.serverUrlInput : refs.m3uUrlInput
+        method === "m3u" ? refs.m3uUrlInput : refs.serverUrlInput
       target?.focus()
     }
 
@@ -628,6 +611,9 @@ const view: TvView = {
     document.addEventListener(LOCALE_EVENT, onLocaleChanged)
 
     paintMethodButtons()
+    // The Star tab is the default on a television, so its labels (and the pre-filled service
+    // code) are applied at mount — setMethod() early-returns when the mode is unchanged.
+    if (method === "star") applyStarLabels()
     void initCancelAvailability()
 
     return () => {
