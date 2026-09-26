@@ -54,8 +54,10 @@ import {
 } from "@/scripts/lib/android-video-launcher.js"
 import { getAndroidNativePlayerEnabled, getAudioTranscodeAuto } from "@/scripts/lib/app-settings.js"
 import {
+  bridgeSkipReason,
   liveBridgeSupported,
   liveBridgeUrl,
+  reportBridgeState,
   startLiveBridge,
   stopLiveBridge,
   tuneLiveBridge,
@@ -3947,6 +3949,8 @@ async function launchNativeLiveSession(initialStreamId, initialName) {
       if (initialOriginUrl) tuneLiveBridge(initialOriginUrl)
       for (const entry of channelInputs) entry.streamUrl = liveBridgeUrl(entry.streamUrl)
     }
+  } else {
+    reportBridgeState(`skipped: ${bridgeSkipReason()}`)
   }
 
   const programmes = activePlaylistId

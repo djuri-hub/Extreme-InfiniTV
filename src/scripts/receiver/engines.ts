@@ -28,8 +28,10 @@ import {
   type AndroidNativeEvent,
 } from "@/scripts/lib/android-video-launcher.js"
 import {
+  bridgeSkipReason,
   liveBridgeSupported,
   liveBridgeUrl,
+  reportBridgeState,
   startLiveBridge,
   stopLiveBridge,
   tuneLiveBridge,
@@ -776,6 +778,8 @@ export function createAndroidNativeReceiverEngine(callbacks: ReceiverEngineCallb
           tuneLiveBridge(descriptor.src)
           bridgeActive = true
         }
+      } else if (descriptor.isLive) {
+        reportBridgeState(`skipped: ${bridgeSkipReason()}`)
       }
       const liveChannels = liveContext
         ? liveContext.channels

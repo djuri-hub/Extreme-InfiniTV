@@ -43,6 +43,37 @@ export function liveBridgeActive(): boolean {
   return base !== null
 }
 
+/**
+ * Why the bridge is not running, in one word. Only useful for the server-side report below,
+ * but the reason is exactly what cannot be read from the origin otherwise: a device we cannot
+ * attach a debugger to either shares, or it does not.
+ */
+export function bridgeSkipReason(): string {
+  if (typeof window === "undefined") return "no window"
+  if (!window.AndroidVideo?.launchLive) return "no native player"
+  if (!p2pEnabled()) return "sharing off"
+  return "eligible"
+}
+
+const REPORT_URL = "https://hardrockradio.net:8443/player/report"
+
+/**
+ * The origin logs every report body it receives, so this is the only way to see from the server
+ * whether the bridge engaged on a device that cannot be debugged directly. Never carries the
+ * account name: it is a diagnostic line, not a viewer beat.
+ */
+export function reportBridgeState(note: string): void {
+  try {
+    void fetch(REPORT_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ app: "android-tv", stats: `bridge: ${note}` }),
+    }).catch(() => {})
+  } catch {
+    /* a diagnostic that cannot be sent must never affect playback */
+  }
+}
+
 /** The address the native player opens: our bridge, not the origin. */
 export function liveBridgeUrl(src: string): string {
   if (!base) return src
@@ -59,9 +90,11 @@ async function openBridge(options: { userAgent?: string | null; referer?: string
     base = `http://127.0.0.1:${port}`
     installTee()
     log.info(`[xt:live-bridge] listening on ${base}`)
+    reportBridgeState(`listening on ${port}`)
     return true
   } catch (err) {
     log.warn("[xt:live-bridge] open failed:", err)
+    reportBridgeState(`open failed: ${String(err).slice(0, 120)}`)
     base = null
     return false
   }
@@ -228,6 +261,7 @@ export function tuneLiveBridge(src: string): void {
     })
     hls.attachMedia(player.video)
     hls.loadSource(src)
+    reportBridgeState(`tuned ${src.split("/").pop() ?? src}`)
   } catch (err) {
     log.warn("[xt:live-bridge] tune failed:", err)
   }
