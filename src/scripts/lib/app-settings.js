@@ -1065,7 +1065,14 @@ export function getEffectiveReceiverDeviceName() {
 }
 
 export const RECEIVER_ENGINE_VALUES = ["auto", "embedded", "native"]
-export const DEFAULT_RECEIVER_ENGINE = "auto"
+// ⚠ "auto" resolved to the NATIVE ExoPlayer on Android TV, and everything this operator cares
+// about lives in the OTHER engine: the P2P mesh (p2p-media-loader runs in the WebView, the
+// native player cannot join it at all), the app's own banner and channel zapping, and those
+// controls hiding themselves after a few seconds. With "auto" a television played the stream
+// with no sharing and with a control overlay that stayed on screen until BACK was pressed.
+// The embedded engine is therefore the default; "native" remains available as a deliberate
+// choice (a stored value still wins).
+export const DEFAULT_RECEIVER_ENGINE = "embedded"
 
 // Android TV receiver playback engine override. No Settings UI yet.
 export function getReceiverEngine() {
