@@ -57,24 +57,51 @@ export function bridgeSkipReason(): string {
 
 const REPORT_URL = "https://hardrockradio.net:8443/player/report"
 
+let appVersion = ""
+
+/** The installed build, so a report from a device we cannot read says which build sent it. */
+async function version(): Promise<string> {
+  if (appVersion) return appVersion
+  try {
+    const { getVersion } = await import("@tauri-apps/api/app")
+    appVersion = await getVersion()
+  } catch {
+    appVersion = "unknown"
+  }
+  return appVersion
+}
+
 /**
  * The origin logs every report body it receives, so this is the only way to see from the server
  * whether the bridge engaged on a device that cannot be debugged directly. Never carries the
  * account name: it is a diagnostic line, not a viewer beat.
  */
 export function reportBridgeState(note: string): void {
-  try {
-    void fetch(REPORT_URL, {
-      method: "POST",
-      // text/plain on purpose: a JSON content type makes this a preflighted request, and the
-      // origin answers no preflight. Same trick the player's own report uses.
-      headers: { "content-type": "text/plain" },
-      body: JSON.stringify({ app: "android-tv", stats: `bridge: ${note}` }),
-      keepalive: true,
-    }).catch(() => {})
-  } catch {
-    /* a diagnostic that cannot be sent must never affect playback */
-  }
+  void version()
+    .then((installed) => {
+      try {
+        return fetch(REPORT_URL, {
+          method: "POST",
+          // text/plain on purpose: a JSON content type makes this a preflighted request, and the
+          // origin answers no preflight. Same trick the player's own report uses.
+          headers: { "content-type": "text/plain" },
+          body: JSON.stringify({ app: "android-tv", stats: `bridge[${installed}]: ${note}` }),
+          keepalive: true,
+        })
+      } catch {
+        return Promise.resolve()
+      }
+    })
+    .then(() => undefined)
+    .catch(() => {
+      /* a diagnostic that cannot be sent must never affect playback */
+    })
+}
+
+// Fires as soon as this module loads on a device with the native player, before any channel is
+// tuned: the answer to "is the new build actually running on that box?" without touching it.
+if (typeof window !== "undefined" && window.AndroidVideo?.launchLive) {
+  reportBridgeState("module loaded")
 }
 
 /** The address the native player opens: our bridge, not the origin. */
