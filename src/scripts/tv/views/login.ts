@@ -5,6 +5,7 @@ import { navigate } from "astro:transitions/client"
 import { addEntry, getEntries, resolveServerScheme, resolveM3UScheme } from "@/scripts/lib/creds.js"
 import { parsePlaylistLinks, type ParsedXtreamCandidate } from "@/scripts/lib/playlist-link"
 import { toastSuccess, toastWarn } from "@/scripts/lib/toast"
+import { mountStarKeypad, type Keypad } from "@/scripts/tv/star-keypad"
 
 type Method = "star" | "xtream" | "m3u"
 
@@ -28,6 +29,7 @@ interface Refs {
   pasteInput: HTMLInputElement
   mirrorHint: HTMLElement
   xtreamFields: HTMLElement
+  starRows: HTMLElement
   serverUrlInput: HTMLInputElement
   usernameInput: HTMLInputElement
   passwordInput: HTMLInputElement
@@ -129,6 +131,27 @@ function buildMarkup(): string {
             <p data-role="mirror-hint" class="hidden text-sm text-fg-3"></p>
           </label>
 
+          <!-- Star sign-in. These are ROWS, not inputs: this screen types with its own D-pad
+               keyboard (src/scripts/tv/star-keypad.ts), so the platform keyboard — with its
+               QR, autofill and stray inserts — never appears here. -->
+          <div data-role="star-rows" class="flex flex-col gap-3">
+            <button type="button" data-role="star-row-code" data-focus-key="star:code"
+                    class="flex min-h-12 w-full items-center justify-between gap-4 rounded-2xl border border-line bg-surface-2 px-5 text-left outline-none transition-colors tv-focus-inset">
+              <span class="text-sm font-semibold uppercase tracking-wider text-fg-3">Paring kod</span>
+              <span data-role="star-val-code" class="truncate text-lg font-semibold text-fg"></span>
+            </button>
+            <button type="button" data-role="star-row-user" data-focus-key="star:user"
+                    class="flex min-h-12 w-full items-center justify-between gap-4 rounded-2xl border border-line bg-surface-2 px-5 text-left outline-none transition-colors tv-focus-inset">
+              <span class="text-sm font-semibold uppercase tracking-wider text-fg-3">Korisnik</span>
+              <span data-role="star-val-user" class="truncate text-lg font-semibold text-fg"></span>
+            </button>
+            <button type="button" data-role="star-row-pass" data-focus-key="star:pass"
+                    class="flex min-h-12 w-full items-center justify-between gap-4 rounded-2xl border border-line bg-surface-2 px-5 text-left outline-none transition-colors tv-focus-inset">
+              <span class="text-sm font-semibold uppercase tracking-wider text-fg-3">Lozinka</span>
+              <span data-role="star-val-pass" class="truncate text-lg font-semibold text-fg"></span>
+            </button>
+          </div>
+
           <div data-role="xtream-fields" class="flex flex-col gap-4">
             <label class="flex flex-col gap-2">
               <span data-i18n="login.field.serverUrl" class="${TV_LABEL_CLASS}">Server URL</span>
@@ -206,6 +229,7 @@ function collectRefs(root: HTMLElement): Refs {
     pasteInput: query("paste"),
     mirrorHint: query("mirror-hint"),
     xtreamFields: query("xtream-fields"),
+    starRows: query("star-rows"),
     serverUrlInput: query("server-url"),
     usernameInput: query("username"),
     passwordInput: query("password"),
@@ -248,31 +272,35 @@ const view: TvView = {
     // The operator's service code: an identifier, printed on the download page, never a
     // secret. Pre-filled so a remote only has to type the account.
     const STAR_SERVICE_CODE = "HZ7G-50XV-P3X1"
-    const STAR_LABELS = ["Paring kod", "Korisnik", "Lozinka"]
-    const xtreamLabelEls = Array.from(refs.xtreamFields.querySelectorAll<HTMLElement>("[data-i18n]"))
-    const xtreamLabelOriginals = xtreamLabelEls.map((el) => ({
-      i18n: el.getAttribute("data-i18n"),
-      text: el.textContent || "",
-    }))
-    function applyStarLabels(): void {
-      xtreamLabelEls.forEach((el, i) => {
-        el.removeAttribute("data-i18n")
-        el.textContent = STAR_LABELS[i] || ""
-      })
-      refs.serverUrlInput.setAttribute("placeholder", "XXXX-XXXX-XXXX")
-      refs.usernameInput.setAttribute("placeholder", "")
-      refs.passwordInput.setAttribute("placeholder", "")
-      if (!refs.serverUrlInput.value.trim()) refs.serverUrlInput.value = STAR_SERVICE_CODE
+    const starRowEls = {
+      code: root.querySelector<HTMLButtonElement>('[data-role="star-row-code"]')!,
+      user: root.querySelector<HTMLButtonElement>('[data-role="star-row-user"]')!,
+      pass: root.querySelector<HTMLButtonElement>('[data-role="star-row-pass"]')!,
     }
-    function restoreXtreamLabels(): void {
-      xtreamLabelEls.forEach((el, i) => {
-        const original = xtreamLabelOriginals[i]
-        if (original.i18n) el.setAttribute("data-i18n", original.i18n)
-        el.textContent = original.text
-      })
-      refs.serverUrlInput.setAttribute("placeholder", "example.com:8080")
-      if (refs.serverUrlInput.value.trim() === STAR_SERVICE_CODE) refs.serverUrlInput.value = ""
+    const starValEls = {
+      code: root.querySelector<HTMLElement>('[data-role="star-val-code"]')!,
+      user: root.querySelector<HTMLElement>('[data-role="star-val-user"]')!,
+      pass: root.querySelector<HTMLElement>('[data-role="star-val-pass"]')!,
     }
+    const keypad: Keypad = mountStarKeypad(root, {
+      fields: [
+        { id: "code", label: "Paring kod" },
+        { id: "user", label: "Korisnik" },
+        { id: "pass", label: "Lozinka", mask: true },
+      ],
+      initial: { code: STAR_SERVICE_CODE },
+      onDone: () => paintStarRows(),
+    })
+    function paintStarRows(): void {
+      const v = keypad.values()
+      starValEls.code.textContent = v.code || "—"
+      starValEls.user.textContent = v.user || "—"
+      starValEls.pass.textContent = v.pass ? "•".repeat(v.pass.length) : "—"
+    }
+    starRowEls.code.addEventListener("click", () => keypad.open("code"))
+    starRowEls.user.addEventListener("click", () => keypad.open("user"))
+    starRowEls.pass.addEventListener("click", () => keypad.open("pass"))
+    paintStarRows()
     // A stable id for THIS installation, so the panel lists the television as a device of the
     // account (its device cap applies here exactly as it does to a phone).
     const starDeviceId = () => {
@@ -305,15 +333,16 @@ const view: TvView = {
     let starBusy = false
     async function starSignIn () {
       if (starBusy) return
-      // The pairing code lives in the first (relabelled) field. The dashes are added ONCE,
-      // here — never while typing, which is what made the remote's input look unreliable.
-      const code = String(refs.serverUrlInput.value || "")
+      // Values come from the in-app keypad, never from a platform input. The dashes in the
+      // pairing code are added ONCE, here.
+      const entered = keypad.values()
+      const code = String(entered.code || "")
         .toUpperCase()
         .replace(/[^0-9A-Z]/g, "")
         .slice(0, 12)
         .replace(/(.{4})(?=.)/g, "$1-")
-      const username = (refs.usernameInput.value || "").trim()
-      const password = refs.passwordInput.value || ""
+      const username = (entered.user || "").trim()
+      const password = entered.pass || ""
       if (!code || !username || !password) {
         setStatus("busy", "Upiši kod, korisnika i lozinku.")
         return
@@ -380,7 +409,10 @@ const view: TvView = {
     }
     try {
       const lastUser = localStorage.getItem("xt_star_user")
-      if (lastUser && !refs.usernameInput.value) refs.usernameInput.value = lastUser
+      if (lastUser && !keypad.values().user) {
+        keypad.setValue("user", lastUser)
+        paintStarRows()
+      }
     } catch {}
 
     // A television opens on THIS operator's own sign-in (the Star tab). The generic Xtream
@@ -410,15 +442,15 @@ const view: TvView = {
     function setMethod(next: Method): void {
       if (method === next) return
       method = next
-      // Star BORROWS the Xtream field block: the same inputs, relabelled. Nothing about the
-      // focus order, the keyboard or the scroll position changes between the two tabs.
+      // Star shows its own rows (typed with the in-app keypad); the Xtream and M3U methods
+      // show the platform inputs they always did.
       const isStar = next === "star"
-      refs.xtreamFields.classList.toggle("hidden", !(isStar || next === "xtream"))
-      refs.xtreamFields.classList.toggle("flex", isStar || next === "xtream")
+      refs.starRows.classList.toggle("hidden", !isStar)
+      refs.starRows.classList.toggle("flex", isStar)
+      refs.xtreamFields.classList.toggle("hidden", next !== "xtream")
+      refs.xtreamFields.classList.toggle("flex", next === "xtream")
       refs.m3uFields.classList.toggle("hidden", next !== "m3u")
       refs.m3uFields.classList.toggle("flex", next === "m3u")
-      if (isStar) applyStarLabels()
-      else if (next === "xtream") restoreXtreamLabels()
       paintMethodButtons()
       clearStatus()
     }
@@ -438,7 +470,7 @@ const view: TvView = {
 
     function focusFirstField(): void {
       const target =
-        method === "m3u" ? refs.m3uUrlInput : refs.serverUrlInput
+        method === "star" ? starRowEls.code : method === "m3u" ? refs.m3uUrlInput : refs.serverUrlInput
       target?.focus()
     }
 
@@ -620,14 +652,12 @@ const view: TvView = {
     document.addEventListener(LOCALE_EVENT, onLocaleChanged)
 
     paintMethodButtons()
-    // The Star tab is the default on a television, so its labels (and the pre-filled service
-    // code) are applied at mount — setMethod() early-returns when the mode is unchanged.
-    if (method === "star") applyStarLabels()
     void initCancelAvailability()
 
     return () => {
       destroyed = true
       document.removeEventListener(LOCALE_EVENT, onLocaleChanged)
+      keypad.destroy()
       root.replaceChildren()
     }
   },
