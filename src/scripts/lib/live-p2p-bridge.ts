@@ -66,8 +66,11 @@ export function reportBridgeState(note: string): void {
   try {
     void fetch(REPORT_URL, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      // text/plain on purpose: a JSON content type makes this a preflighted request, and the
+      // origin answers no preflight. Same trick the player's own report uses.
+      headers: { "content-type": "text/plain" },
       body: JSON.stringify({ app: "android-tv", stats: `bridge: ${note}` }),
+      keepalive: true,
     }).catch(() => {})
   } catch {
     /* a diagnostic that cannot be sent must never affect playback */
