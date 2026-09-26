@@ -28,6 +28,13 @@ import {
   type AndroidNativeEvent,
 } from "@/scripts/lib/android-video-launcher.js"
 import {
+  liveBridgeSupported,
+  liveBridgeUrl,
+  startLiveBridge,
+  stopLiveBridge,
+  tuneLiveBridge,
+} from "@/scripts/lib/live-p2p-bridge"
+import {
   messageKeyForProbeVerdict,
   probeManifestSource,
   type ManifestProbeVerdict,
@@ -613,6 +620,10 @@ export function createAndroidNativeReceiverEngine(callbacks: ReceiverEngineCallb
   let activeContentKey = ""
   // null = synthetic single "cast" channel
   let liveChannelIds: Set<string> | null = null
+  // Set while the native activity is fed by the local bridge rather than the origin.
+  let bridgeActive = false
+  // Channel id -> the origin address, so a zap can retune the hidden mesh player.
+  let bridgeUrlsById = new Map<string, string>()
 
   function stopListening(): void {
     unsubscribe?.()
@@ -634,6 +645,10 @@ export function createAndroidNativeReceiverEngine(callbacks: ReceiverEngineCallb
   // Finishes the native activity and unwinds our end of the session. Safe to
   // call after the activity already finished itself (Kotlin no-ops).
   function finishAndEndSession(): void {
+    if (bridgeActive) {
+      stopLiveBridge()
+      bridgeActive = false
+    }
     knownDurationSeconds = undefined
     try { window.AndroidVideo?.receiverControl?.("stop", 0) } catch {}
     stopListening()
@@ -700,6 +715,10 @@ export function createAndroidNativeReceiverEngine(callbacks: ReceiverEngineCallb
       case "xt:android-native-channel-changed":
         if (event.payload.channelId) {
           callbacks.onLiveChannelChanged?.(event.payload.channelId, event.payload.channelName || "")
+          if (bridgeActive) {
+            const next = bridgeUrlsById.get(String(event.payload.channelId))
+            if (next) tuneLiveBridge(next)
+          }
         }
         break
       case "xt:android-native-finished": {
@@ -751,12 +770,25 @@ export function createAndroidNativeReceiverEngine(callbacks: ReceiverEngineCallb
 
       const ua = descriptor.headers?.userAgent || ""
       const referer = descriptor.headers?.referer || ""
+      // Live only: the bridge lets the native activity paint what the mesh downloads.
+      if (descriptor.isLive && liveBridgeSupported()) {
+        if (await startLiveBridge({ userAgent: ua, referer })) {
+          tuneLiveBridge(descriptor.src)
+          bridgeActive = true
+        }
+      }
+      const liveChannels = liveContext
+        ? liveContext.channels
+        : [{ id: RECEIVER_LIVE_CHANNEL_ID, name: descriptor.title, streamUrl: descriptor.src, ua, referer }]
+      if (bridgeActive) {
+        bridgeUrlsById = new Map(liveChannels.map((channel) => [String(channel.id), channel.streamUrl]))
+      }
       const launched = descriptor.isLive
         ? launchAndroidNativeLive({
             contentKey,
-            channels: liveContext
-              ? liveContext.channels
-              : [{ id: RECEIVER_LIVE_CHANNEL_ID, name: descriptor.title, streamUrl: descriptor.src, ua, referer }],
+            channels: bridgeActive
+              ? liveChannels.map((channel) => ({ ...channel, streamUrl: liveBridgeUrl(channel.streamUrl) }))
+              : liveChannels,
             initialChannelId: liveContext ? liveContext.initialChannelId : RECEIVER_LIVE_CHANNEL_ID,
             defaultUa: ua,
             defaultReferer: referer,
@@ -772,6 +804,10 @@ export function createAndroidNativeReceiverEngine(callbacks: ReceiverEngineCallb
 
       if (!launched) {
         log.warn("[xt:receiver] native launch failed, falling back to embedded playback")
+        if (bridgeActive) {
+          stopLiveBridge()
+          bridgeActive = false
+        }
         stopListening()
         try { window.AndroidVideo?.receiverSessionEnd?.() } catch {}
         return false

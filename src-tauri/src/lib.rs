@@ -26,6 +26,8 @@ mod receiver;
 
 mod receiver_store;
 
+mod p2p_live;
+
 mod safe_fetch;
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -287,6 +289,9 @@ pub fn run() {
             warmup::warmup_cancel,
             warmup::warmup_ack,
             warmup::warmup_read_staged,
+            p2p_live::p2p_live_open,
+            p2p_live::p2p_live_close,
+            p2p_live::p2p_live_stats,
         ]);
 
     #[cfg(target_os = "android")]
@@ -310,6 +315,9 @@ pub fn run() {
         warmup::warmup_cancel,
         warmup::warmup_ack,
         warmup::warmup_read_staged,
+        p2p_live::p2p_live_open,
+        p2p_live::p2p_live_close,
+        p2p_live::p2p_live_stats,
     ]);
 
     let app = builder
