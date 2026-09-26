@@ -54,6 +54,13 @@ import {
 } from "@/scripts/lib/android-video-launcher.js"
 import { getAndroidNativePlayerEnabled, getAudioTranscodeAuto } from "@/scripts/lib/app-settings.js"
 import {
+  liveBridgeSupported,
+  liveBridgeUrl,
+  startLiveBridge,
+  stopLiveBridge,
+  tuneLiveBridge,
+} from "@/scripts/lib/live-p2p-bridge"
+import {
   audioTranscodeAvailable,
   refreshAudioTranscodeAvailability,
   startAudioTranscode,
@@ -3846,15 +3853,30 @@ function pickConfiguredExternal() {
 
 // Native ExoPlayer Activity intercept for Live TV
 let _nativeLiveSubscribed = false
+// Set while the native activity reads its channels from the local P2P bridge.
+let liveBridgeOn = false
+// Channel id -> the origin address, so a zap retunes the hidden mesh player.
+let liveBridgeUrls = new Map<string, string>()
 function ensureNativeLiveSubscription() {
   if (_nativeLiveSubscribed) return
   _nativeLiveSubscribed = true
   subscribeAndroidNativeEvents((event) => {
+    if (event.type === "xt:android-native-finished") {
+      if (liveBridgeOn) {
+        stopLiveBridge()
+        liveBridgeOn = false
+      }
+      return
+    }
     if (event.type !== "xt:android-native-channel-changed") return
     const channelId = event.payload?.channelId
     if (!channelId) return
     const channel = all.find((entry) => String(entry.id) === String(channelId))
     if (!channel) return
+    if (liveBridgeOn) {
+      const next = liveBridgeUrls.get(String(channelId))
+      if (next) tuneLiveBridge(next)
+    }
     if (activePlaylistId) {
       pushRecent(activePlaylistId, "live", channel.id, channel.name, channel.logo || null)
     }
@@ -3910,6 +3932,22 @@ async function launchNativeLiveSession(initialStreamId, initialName) {
     })
   }
   if (!channelInputs.length) return false
+  // The native activity paints the channel; the bridge is what puts the segments through
+  // the peer mesh on the way there. Only for our own origin, and only while sharing is on.
+  if (liveBridgeSupported()) {
+    const initialHeaders = streamHeadersById.get(initialStreamId) || null
+    const bridged = await startLiveBridge({
+      userAgent: initialHeaders?.userAgent || getUserAgent() || "",
+      referer: initialHeaders?.referer || null,
+    })
+    if (bridged) {
+      liveBridgeUrls = new Map(channelInputs.map((entry) => [String(entry.id), entry.streamUrl]))
+      liveBridgeOn = true
+      const initialOriginUrl = liveBridgeUrls.get(String(initialStreamId))
+      if (initialOriginUrl) tuneLiveBridge(initialOriginUrl)
+      for (const entry of channelInputs) entry.streamUrl = liveBridgeUrl(entry.streamUrl)
+    }
+  }
 
   const programmes = activePlaylistId
     ? getProgrammesSync(activePlaylistId)?.programmes ?? null
