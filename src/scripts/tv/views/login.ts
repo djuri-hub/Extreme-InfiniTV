@@ -128,9 +128,12 @@ function buildMarkup(): string {
         <form data-role="form" class="flex flex-col gap-4" autocomplete="off">
           <div data-role="star-fields" class="flex flex-col gap-4">
             <label class="flex flex-col gap-2">
-              <span class="${TV_LABEL_CLASS}">Paring kod</span>
+              <!-- This operator's service code, pre-filled: it is not a secret (it is printed
+                   on the download page) and a television remote should not have to type it. -->
+              <span class="${TV_LABEL_CLASS}">Paring kod (već upisan)</span>
               <input data-role="star-code" data-focus-key="star:code" type="text"
                      autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX-XXXX"
+                     value="HZ7G-50XV-P3X1"
                      class="${TV_INPUT_CLASS}" />
             </label>
             <label class="flex flex-col gap-2">
@@ -310,7 +313,15 @@ const view: TvView = {
     let starBusy = false
     async function starSignIn () {
       if (starBusy) return
-      const code = (refs.starCode?.value || "").trim()
+      // Normalise the pairing code HERE, not while typing: the phone page rewrites the
+      // field on every keystroke (uppercase + dash mask), and against a television IME's
+      // composition state that shows characters the viewer never typed and can swallow
+      // input. While typing the field only drops separators; the dashes are added once.
+      const code = String(refs.starCode?.value || "")
+        .toUpperCase()
+        .replace(/[^0-9A-Z]/g, "")
+        .slice(0, 12)
+        .replace(/(.{4})(?=.)/g, "$1-")
       const username = (refs.starUser?.value || "").trim()
       const password = refs.starPass?.value || ""
       if (!code || !username || !password) {
@@ -384,8 +395,8 @@ const view: TvView = {
     })
     refs.starCode?.addEventListener("input", (event) => {
       const el = event.target as HTMLInputElement
-      const clean = String(el.value).toUpperCase().replace(/[^0-9A-Z]/g, "").slice(0, 12)
-      el.value = clean.replace(/(.{4})(?=.)/g, "$1-")
+      // Case + separators only — no re-layout of the value under the IME's caret.
+      el.value = String(el.value).toUpperCase().replace(/[^0-9A-Z-]/g, "").slice(0, 14)
     })
     try {
       const lastUser = localStorage.getItem("xt_star_user")
