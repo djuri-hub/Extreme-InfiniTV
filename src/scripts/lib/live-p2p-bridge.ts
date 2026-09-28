@@ -12,6 +12,7 @@ import { invoke } from "@tauri-apps/api/core"
 import Hls from "hls.js"
 import { HlsJsP2PEngine } from "p2p-media-loader-hlsjs"
 import { attachP2pStats, p2pConfigFor, p2pEnabled, swarmIdFor } from "@/scripts/lib/p2p"
+import { startReceiverKeepAlive, stopReceiverKeepAlive } from "@/scripts/lib/receiver-keep-alive"
 import { log } from "@/scripts/lib/log.js"
 
 export interface LiveBridgeStats {
@@ -26,6 +27,10 @@ interface HiddenPlayer {
   hls: Hls | null
   src: string
   timer: number | null
+  /** Last fragment the mesh player handed over; a long silence means it has stalled. */
+  lastFragmentAt: number
+  /** Rate-limits restarts so a channel that genuinely cannot play is not retried in a loop. */
+  lastRestartAt: number
 }
 
 let base: string | null = null
@@ -50,10 +55,15 @@ function holdWebViewAwake(active: boolean): void {
     if (active) {
       bridge.setReceiverPageForeground(true)
       keepAliveHeld = true
+      // A resumed WebView is not the same as a live process: Android still freezes the app
+      // when the screen it is not drawing on goes away. The foreground service holds the wake
+      // lock that keeps the mesh running behind the native player.
+      startReceiverKeepAlive("Star mesh")
     } else if (keepAliveHeld) {
       // Only when this module is the one holding it, so a receiver session is never released.
       bridge.setReceiverPageForeground(false)
       keepAliveHeld = false
+      stopReceiverKeepAlive()
     }
   } catch {
     /* a device without the bridge simply runs the mesh slower */
@@ -274,7 +284,7 @@ function ensureHiddenPlayer(): HiddenPlayer | null {
     video.style.cssText =
       "position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:0"
     document.body.appendChild(video)
-    hidden = { video, hls: null, src: "", timer: null }
+    hidden = { video, hls: null, src: "", timer: null, lastFragmentAt: 0, lastRestartAt: 0 }
     return hidden
   } catch (err) {
     log.warn("[xt:live-bridge] hidden player failed:", err)
@@ -341,13 +351,35 @@ export function tuneLiveBridge(src: string): void {
     }
     hls.on(Hls.Events.LEVEL_UPDATED, hugLiveEdge)
     hls.on(Hls.Events.FRAG_BUFFERED, hugLiveEdge)
-    player.timer = window.setInterval(hugLiveEdge, 5000)
+    player.lastFragmentAt = Date.now()
+    player.timer = window.setInterval(() => {
+      hugLiveEdge()
+      // Android does freeze a backgrounded WebView eventually, whatever the wake lock says, and
+      // a frozen mesh player is invisible from here: the picture keeps working (the bridge pays
+      // the origin) while every peer sees zero. Restart it instead of pretending it is running.
+      const now = Date.now()
+      if (!player.hls || !player.src) return
+      if (now - player.lastFragmentAt <= 30_000) return
+      if (now - player.lastRestartAt <= 60_000) return
+      player.lastRestartAt = now
+      reportBridgeState("mesh player stalled, restarting")
+      const current = player.src
+      try {
+        player.hls.destroy()
+      } catch {
+        /* ignore */
+      }
+      player.hls = null
+      player.src = ""
+      tuneLiveBridge(current)
+    }, 5000)
     // The load-bearing hook. A segment a peer supplied never touches the network, so the
     // request-level tee below cannot see it — and the bridge would then fetch that same
     // segment from the origin again, which is the exact cost sharing exists to remove. The
     // player's own frag-loaded event fires for both paths, so the bridge always gets the bytes.
     hls.on(Hls.Events.FRAG_LOADED, (_event, data) => {
       try {
+        player.lastFragmentAt = Date.now()
         const url = (data as { frag?: { url?: string } })?.frag?.url
         const payload = (data as { payload?: unknown })?.payload
         if (!url || !payload) return
