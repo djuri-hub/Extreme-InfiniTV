@@ -1,0 +1,14 @@
+# Cross-platform ACL for the live P2P bridge commands, granted from default.json.
+#
+# The bridge is what lets the native Android player draw the picture while the WebView keeps
+# the peer mesh: without this permission the command is refused ("not allowed by ACL") and the
+# native player quietly falls back to fetching the channel straight from the origin.
+
+[[permission]]
+identifier = "allow-live-bridge-commands"
+description = "Local HTTP bridge that feeds the native player from the peer mesh."
+commands.allow = [
+    "p2p_live_open",
+    "p2p_live_stats",
+    "p2p_live_close",
+]
