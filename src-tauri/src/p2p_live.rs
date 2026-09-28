@@ -93,6 +93,10 @@ struct Shared {
     cache: Mutex<Cache>,
     counters: Mutex<Counters>,
     playlists: Mutex<HashMap<String, (Instant, String)>>,
+    /// When the WebView last handed a segment over. While the tee is demonstrably alive the
+    /// bridge waits for the WebView's copy instead of paying for the same segment at the origin
+    /// a second time — which is the whole reason sharing exists.
+    tee_seen: Mutex<Option<Instant>>,
 }
 
 static SHARED: OnceLock<Mutex<Option<Arc<Shared>>>> = OnceLock::new();
@@ -257,6 +261,26 @@ async fn handle_segment(
     if let Some(hit) = shared.cache.lock().ok().and_then(|guard| guard.get(&url)) {
         return bytes_response(hit, "video/mp2t");
     }
+    // The WebView is fetching this very segment right now — it is the client that runs the mesh.
+    // Waiting for its copy is what turns "connected to a peer" into "did not fetch this from the
+    // origin". The wait is bounded, and it is skipped entirely until the tee has proven it works,
+    // so a first tune is never held up by a bridge nobody is feeding.
+    let tee_active = shared
+        .tee_seen
+        .lock()
+        .ok()
+        .and_then(|seen| *seen)
+        .map(|at| at.elapsed() < Duration::from_secs(120))
+        .unwrap_or(false);
+    if tee_active {
+        let deadline = Instant::now() + Duration::from_millis(2000);
+        while Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if let Some(hit) = shared.cache.lock().ok().and_then(|guard| guard.get(&url)) {
+                return bytes_response(hit, "video/mp2t");
+            }
+        }
+    }
     match fetch_upstream(&shared, &url).await {
         Ok((bytes, content_type)) => {
             let stored = Arc::new(bytes);
@@ -298,6 +322,9 @@ async fn handle_put(
     if inserted {
         if let Ok(mut counters) = shared.counters.lock() {
             counters.peer_segments += 1;
+        }
+        if let Ok(mut seen) = shared.tee_seen.lock() {
+            *seen = Some(Instant::now());
         }
     }
     StatusCode::NO_CONTENT.into_response()
@@ -345,6 +372,7 @@ pub async fn p2p_live_open(user_agent: Option<String>, referer: Option<String>) 
         cache: Mutex::new(Cache::new()),
         counters: Mutex::new(Counters::default()),
         playlists: Mutex::new(HashMap::new()),
+        tee_seen: Mutex::new(None),
     });
     let router = Router::new()
         .route("/m", get(handle_manifest))
