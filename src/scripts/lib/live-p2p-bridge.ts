@@ -32,6 +32,33 @@ let base: string | null = null
 let starting: Promise<boolean> | null = null
 let hidden: HiddenPlayer | null = null
 let teeInstalled = false
+let keepAliveHeld = false
+
+/**
+ * Android pauses a WebView's timers the moment another activity covers it, and the native
+ * player is exactly that. A throttled hidden player cannot fetch at the live edge, the tee
+ * then delivers nothing, and the bridge pays the origin for every segment — which is the
+ * state this whole module exists to avoid. The app already owns a switch for this (the
+ * receiver needs it for the same reason); the bridge borrows it while it is running.
+ */
+function holdWebViewAwake(active: boolean): void {
+  try {
+    const bridge = (window as unknown as {
+      AndroidReceiverKeepAlive?: { setReceiverPageForeground?: (on: boolean) => void }
+    }).AndroidReceiverKeepAlive
+    if (!bridge?.setReceiverPageForeground) return
+    if (active) {
+      bridge.setReceiverPageForeground(true)
+      keepAliveHeld = true
+    } else if (keepAliveHeld) {
+      // Only when this module is the one holding it, so a receiver session is never released.
+      bridge.setReceiverPageForeground(false)
+      keepAliveHeld = false
+    }
+  } catch {
+    /* a device without the bridge simply runs the mesh slower */
+  }
+}
 
 /** Live TV on Android with the native player present and sharing switched on. */
 export function liveBridgeSupported(): boolean {
@@ -120,6 +147,7 @@ async function openBridge(options: { userAgent?: string | null; referer?: string
     if (!port) return false
     base = `http://127.0.0.1:${port}`
     installTee()
+    holdWebViewAwake(true)
     log.info(`[xt:live-bridge] listening on ${base}`)
     reportBridgeState(`listening on ${port}`)
     return true
@@ -359,6 +387,7 @@ export async function liveBridgeStats(): Promise<LiveBridgeStats | null> {
 }
 
 export function stopLiveBridge(): void {
+  holdWebViewAwake(false)
   if (hidden) {
     if (hidden.timer !== null) {
       window.clearInterval(hidden.timer)
