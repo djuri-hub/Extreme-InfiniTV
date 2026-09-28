@@ -283,6 +283,25 @@ export function tuneLiveBridge(src: string): void {
     })
     player.hls = hls
     attachP2pStats(hls, src)
+    // The load-bearing hook. A segment a peer supplied never touches the network, so the
+    // request-level tee below cannot see it — and the bridge would then fetch that same
+    // segment from the origin again, which is the exact cost sharing exists to remove. The
+    // player's own frag-loaded event fires for both paths, so the bridge always gets the bytes.
+    hls.on(Hls.Events.FRAG_LOADED, (_event, data) => {
+      try {
+        const url = (data as { frag?: { url?: string } })?.frag?.url
+        const payload = (data as { payload?: unknown })?.payload
+        if (!url || !payload) return
+        if (payload instanceof ArrayBuffer) {
+          tee(url, new Uint8Array(payload))
+        } else if (ArrayBuffer.isView(payload)) {
+          const view = payload as Uint8Array
+          tee(url, new Uint8Array(view.buffer, view.byteOffset, view.byteLength))
+        }
+      } catch {
+        /* a fragment the bridge does not receive is fetched from the origin instead */
+      }
+    })
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
       void player.video.play().catch(() => {})
     })
