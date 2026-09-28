@@ -292,6 +292,7 @@ pub fn run() {
             p2p_live::p2p_live_open,
             p2p_live::p2p_live_close,
             p2p_live::p2p_live_stats,
+            p2p_live::p2p_live_join,
         ]);
 
     #[cfg(target_os = "android")]
@@ -318,6 +319,7 @@ pub fn run() {
         p2p_live::p2p_live_open,
         p2p_live::p2p_live_close,
         p2p_live::p2p_live_stats,
+        p2p_live::p2p_live_join,
     ]);
 
     let app = builder

@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Query, State};
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
@@ -97,6 +97,50 @@ struct Shared {
     /// bridge waits for the WebView's copy instead of paying for the same segment at the origin
     /// a second time — which is the whole reason sharing exists.
     tee_seen: Mutex<Option<Instant>>,
+    /// Origin side of this deployment, learned from the first playlist the player asks for.
+    origin: Mutex<Option<String>>,
+    /// The channel group every viewer of this stream shares, in the same shape the players use.
+    swarm: Mutex<Option<String>>,
+    /// Other installations on this local network that can hand over a segment.
+    peers: Mutex<Vec<(String, u16)>>,
+    port: u16,
+}
+
+/// How long one LAN peer may take before the origin is asked instead. Two peers in sequence
+/// still leave the picture inside its buffer, and a peer that is asleep costs nothing else.
+const PEER_TIMEOUT: Duration = Duration::from_millis(700);
+
+fn origin_of(url: &str) -> Option<String> {
+    let scheme_end = url.find("://")?;
+    let rest = &url[scheme_end + 3..];
+    let host_end = rest.find('/').unwrap_or(rest.len());
+    Some(format!("{}{}", &url[..scheme_end + 3], &rest[..host_end]))
+}
+
+fn swarm_of(url: &str) -> Option<String> {
+    let base = origin_of(url)?;
+    let without_query = url.split('?').next().unwrap_or(url);
+    let path = without_query.strip_prefix(&base).unwrap_or("");
+    let host = base.split("://").nth(1)?;
+    Some(format!("aliran-cdn:{}{}", host.to_lowercase(), path.trim_end_matches('/')))
+}
+
+/// The addresses a peer on this network can actually reach us on.
+fn lan_addresses() -> Vec<String> {
+    let mut out = Vec::new();
+    if let Ok(interfaces) = if_addrs::get_if_addrs() {
+        for interface in interfaces {
+            if interface.is_loopback() {
+                continue;
+            }
+            if let std::net::IpAddr::V4(address) = interface.addr.ip() {
+                if address.is_private() || address.is_link_local() {
+                    out.push(address.to_string());
+                }
+            }
+        }
+    }
+    out
 }
 
 static SHARED: OnceLock<Mutex<Option<Arc<Shared>>>> = OnceLock::new();
@@ -187,6 +231,74 @@ fn bytes_response(data: Arc<Vec<u8>>, content_type: &str) -> Response {
     response
 }
 
+/// Hand a segment to another installation on this network. Only bytes this device already holds
+/// are served — a peer never causes an origin fetch, so a sleepy television cannot be turned
+/// into extra load by asking it for the world.
+async fn handle_peer_segment(
+    State(shared): State<Arc<Shared>>,
+    Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    let swarm = shared.swarm.lock().ok().and_then(|guard| guard.clone()).unwrap_or_default();
+    let token = headers.get("x-peer-token").and_then(|value| value.to_str().ok()).unwrap_or("");
+    if swarm.is_empty() || token != swarm {
+        return (StatusCode::FORBIDDEN, "peer token required").into_response();
+    }
+    let Some(url) = params.get("u").filter(|value| !value.is_empty()) else {
+        return (StatusCode::BAD_REQUEST, "missing u").into_response();
+    };
+    match shared.cache.lock().ok().and_then(|guard| guard.get(url)) {
+        Some(hit) => bytes_response(hit, "video/mp2t"),
+        None => (StatusCode::NOT_FOUND, "not cached").into_response(),
+    }
+}
+
+async fn handle_peer_ping(State(shared): State<Arc<Shared>>) -> Response {
+    let swarm = shared.swarm.lock().ok().and_then(|guard| guard.clone()).unwrap_or_default();
+    axum::Json(serde_json::json!({ "ok": true, "swarm": swarm, "port": shared.port })).into_response()
+}
+
+/// Tell the origin where we can be reached, and keep the list of installations behind the same
+/// public address. Fifteen seconds is short enough that a device which just opened a channel is
+/// found, and long enough to cost nothing.
+async fn register_loop(shared: Arc<Shared>) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(15)).await;
+        let origin = shared.origin.lock().ok().and_then(|guard| guard.clone());
+        let swarm = shared.swarm.lock().ok().and_then(|guard| guard.clone());
+        let (Some(origin), Some(swarm)) = (origin, swarm) else { continue };
+        let addresses = lan_addresses();
+        if addresses.is_empty() {
+            continue;
+        }
+        for address in addresses {
+            let body = serde_json::json!({ "swarm": swarm, "lan": address, "port": shared.port });
+            let request = shared
+                .client
+                .post(format!("{origin}/peer/register"))
+                .timeout(Duration::from_secs(6))
+                .json(&body);
+            let Ok(response) = request.send().await else { continue };
+            let Ok(payload) = response.json::<serde_json::Value>().await else { continue };
+            let mut found = Vec::new();
+            if let Some(list) = payload.get("peers").and_then(|value| value.as_array()) {
+                for entry in list {
+                    let lan = entry.get("lan").and_then(|value| value.as_str()).unwrap_or("");
+                    let port = entry.get("port").and_then(|value| value.as_u64()).unwrap_or(0);
+                    if !lan.is_empty() && port > 0 && port < 65536 {
+                        found.push((lan.to_string(), port as u16));
+                    }
+                }
+            }
+            if !found.is_empty() {
+                if let Ok(mut guard) = shared.peers.lock() {
+                    *guard = found;
+                }
+            }
+        }
+    }
+}
+
 async fn fetch_upstream(shared: &Shared, url: &str) -> Result<(Vec<u8>, String), String> {
     let mut request = shared.client.get(url);
     if !shared.ua.is_empty() {
@@ -218,6 +330,25 @@ async fn handle_manifest(
         Some(value) if !value.is_empty() => value.clone(),
         _ => return (StatusCode::BAD_REQUEST, "missing u").into_response(),
     };
+    // The first playlist a player asks for carries everything the peer side needs to know:
+    // which origin to register with, and which channel group this device belongs to.
+    let mut first_sighting = false;
+    if let Ok(mut guard) = shared.origin.lock() {
+        if guard.is_none() {
+            if let Some(origin) = origin_of(&manifest) {
+                *guard = Some(origin);
+                first_sighting = true;
+            }
+        }
+    }
+    if let Ok(mut guard) = shared.swarm.lock() {
+        if guard.is_none() {
+            *guard = swarm_of(&manifest);
+        }
+    }
+    if first_sighting {
+        tokio::spawn(register_loop(shared.clone()));
+    }
     if let Ok(guard) = shared.playlists.lock() {
         if let Some((at, body)) = guard.get(&manifest) {
             if at.elapsed() < PLAYLIST_TTL {
@@ -260,6 +391,35 @@ async fn handle_segment(
     };
     if let Some(hit) = shared.cache.lock().ok().and_then(|guard| guard.get(&url)) {
         return bytes_response(hit, "video/mp2t");
+    }
+    // Peers first. These are installations on the same network, so this is a LAN hop, not a
+    // round trip to the provider — which is the whole point: the television's bytes come from
+    // the laptop next to it instead of from the origin that pays for them.
+    let peers = shared.peers.lock().map(|guard| guard.clone()).unwrap_or_default();
+    let swarm = shared.swarm.lock().ok().and_then(|guard| guard.clone()).unwrap_or_default();
+    for (lan, port) in peers {
+        let peer_url = format!("http://{lan}:{port}/peer/seg?u={}", encode_query(&url));
+        let request = shared
+            .client
+            .get(peer_url)
+            .header("x-peer-token", swarm.clone())
+            .timeout(PEER_TIMEOUT);
+        let Ok(response) = request.send().await else { continue };
+        if !response.status().is_success() {
+            continue;
+        }
+        let Ok(bytes) = response.bytes().await else { continue };
+        if bytes.is_empty() {
+            continue;
+        }
+        let stored = Arc::new(bytes.to_vec());
+        if let Ok(mut guard) = shared.cache.lock() {
+            guard.put(url, stored.clone());
+        }
+        if let Ok(mut counters) = shared.counters.lock() {
+            counters.peer_segments += 1;
+        }
+        return bytes_response(stored, "video/mp2t");
     }
     // The WebView is fetching this very segment right now — it is the client that runs the mesh.
     // Waiting for its copy is what turns "connected to a peer" into "did not fetch this from the
@@ -357,7 +517,10 @@ pub async fn p2p_live_open(user_agent: Option<String>, referer: Option<String>) 
             .and_then(|port| port.parse::<u16>().ok())
             .ok_or_else(|| "bridge port unavailable".to_string());
     }
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+    // Bound on every interface, not just loopback: the native player reaches it on 127.0.0.1,
+    // and the installations next to it reach it on the local network. The peer routes require
+    // the channel token, so opening the port does not open the cache to strangers.
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:0")
         .await
         .map_err(|error| format!("bind failed: {error}"))?;
     let port = listener.local_addr().map_err(|error| format!("addr failed: {error}"))?.port();
@@ -373,12 +536,18 @@ pub async fn p2p_live_open(user_agent: Option<String>, referer: Option<String>) 
         counters: Mutex::new(Counters::default()),
         playlists: Mutex::new(HashMap::new()),
         tee_seen: Mutex::new(None),
+        origin: Mutex::new(None),
+        swarm: Mutex::new(None),
+        peers: Mutex::new(Vec::new()),
+        port,
     });
     let router = Router::new()
         .route("/m", get(handle_manifest))
         .route("/s", get(handle_segment))
         .route("/put", post(handle_put))
         .route("/stats", get(handle_stats))
+        .route("/peer/seg", get(handle_peer_segment))
+        .route("/peer/ping", get(handle_peer_ping))
         .layer(DefaultBodyLimit::max(MAX_SEGMENT_BYTES))
         .with_state(shared.clone());
     tokio::spawn(async move {
@@ -394,6 +563,10 @@ pub async fn p2p_live_open(user_agent: Option<String>, referer: Option<String>) 
 
 #[tauri::command]
 pub async fn p2p_live_stats() -> P2PLiveStats {
+    snapshot()
+}
+
+fn snapshot() -> P2PLiveStats {
     let Some(shared) = current() else {
         return P2PLiveStats::default();
     };
@@ -408,6 +581,32 @@ pub async fn p2p_live_stats() -> P2PLiveStats {
         .map(|cache| (cache.bytes.len() as u64, cache.total as u64))
         .unwrap_or((0, 0));
     P2PLiveStats { peer_segments, origin_segments, cached_segments, cached_bytes }
+}
+
+/// A player that is already running (the phone, the desktop) does not need the bridge to draw
+/// anything, but it does hold the newest segments — and the television next to it wants them.
+/// This joins it to the peer side without starting a second player.
+#[tauri::command]
+pub async fn p2p_live_join(source_url: String) -> Result<(), String> {
+    let shared = current().ok_or_else(|| "bridge not open".to_string())?;
+    let origin = origin_of(&source_url).ok_or_else(|| "bad url".to_string())?;
+    let swarm = swarm_of(&source_url).ok_or_else(|| "bad url".to_string())?;
+    let mut start = false;
+    if let Ok(mut guard) = shared.origin.lock() {
+        if guard.is_none() {
+            *guard = Some(origin);
+            start = true;
+        }
+    }
+    if let Ok(mut guard) = shared.swarm.lock() {
+        if guard.is_none() {
+            *guard = Some(swarm);
+        }
+    }
+    if start {
+        tokio::spawn(register_loop(shared.clone()));
+    }
+    Ok(())
 }
 
 /// Called when the player closes the channel: the mesh keeps its own cache, so the bridge's

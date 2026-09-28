@@ -23,6 +23,7 @@ import {
 } from "@/scripts/lib/audio-tracks.js"
 import { HlsJsP2PEngine } from "p2p-media-loader-hlsjs"
 import { attachP2pStats, p2pConfigFor, swarmIdFor, withViewerToken } from "@/scripts/lib/p2p"
+import { serveSegmentsForPeers } from "@/scripts/lib/live-p2p-bridge"
 import {
   getPlayerBackend,
   getPlayerPath,
@@ -1268,6 +1269,8 @@ function attachHlsToVideo(
     /* an environment without window events still gets the paused, source-less element */
   }
   if (p2p) attachP2pStats(hls, cleanUrl)
+  // The television next to this device wants the segments this player already holds.
+  if (p2p) serveSegmentsForPeers(hls, cleanUrl)
   let netRecover = 0
   let mediaRecover = 0
   let parseErrors = 0

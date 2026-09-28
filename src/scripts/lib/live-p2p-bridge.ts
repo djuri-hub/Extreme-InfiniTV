@@ -418,6 +418,43 @@ export async function liveBridgeStats(): Promise<LiveBridgeStats | null> {
   }
 }
 
+/**
+ * A player that is already on screen — the phone's, the desktop's — holds the newest segments
+ * and is exactly what the television next to it is missing. Joining it to the peer side costs
+ * one hidden HTTP server and a hook on its own fragment event: no second player, no TURN, and
+ * nothing that can freeze while it is the one drawing the picture.
+ */
+export function serveSegmentsForPeers(hls: unknown, src: string): void {
+  if (!src || !hls) return
+  void startLiveBridge({})
+    .then((ready) => {
+      if (!ready) return
+      void invoke("p2p_live_join", { sourceUrl: src }).catch(() => {})
+      try {
+        const instance = hls as { on: (event: string, listener: (event: unknown, data: unknown) => void) => void }
+        instance.on(Hls.Events.FRAG_LOADED, (_event, data) => {
+          try {
+            const url = (data as { frag?: { url?: string } })?.frag?.url
+            const payload = (data as { payload?: unknown })?.payload
+            if (!url || !payload) return
+            if (payload instanceof ArrayBuffer) tee(url, new Uint8Array(payload))
+            else if (ArrayBuffer.isView(payload)) {
+              const view = payload as Uint8Array
+              tee(url, new Uint8Array(view.buffer, view.byteOffset, view.byteLength))
+            }
+          } catch {
+            /* a fragment we do not hand over is one a peer fetches itself */
+          }
+        })
+      } catch (err) {
+        log.warn("[xt:live-bridge] peer serve hook failed:", err)
+      }
+    })
+    .catch(() => {
+      /* sharing is an extra: a player that cannot join one plays exactly as before */
+    })
+}
+
 export function stopLiveBridge(): void {
   holdWebViewAwake(false)
   if (hidden) {
