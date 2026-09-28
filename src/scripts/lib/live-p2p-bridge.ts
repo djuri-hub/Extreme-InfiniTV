@@ -25,6 +25,7 @@ interface HiddenPlayer {
   video: HTMLVideoElement
   hls: Hls | null
   src: string
+  timer: number | null
 }
 
 let base: string | null = null
@@ -245,7 +246,7 @@ function ensureHiddenPlayer(): HiddenPlayer | null {
     video.style.cssText =
       "position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:0"
     document.body.appendChild(video)
-    hidden = { video, hls: null, src: "" }
+    hidden = { video, hls: null, src: "", timer: null }
     return hidden
   } catch (err) {
     log.warn("[xt:live-bridge] hidden player failed:", err)
@@ -263,6 +264,10 @@ export function tuneLiveBridge(src: string): void {
   if (!player) return
   if (player.src === src && player.hls) return
   player.src = src
+  if (player.timer !== null) {
+    window.clearInterval(player.timer)
+    player.timer = null
+  }
   try {
     player.hls?.destroy()
   } catch {
@@ -278,11 +283,37 @@ export function tuneLiveBridge(src: string): void {
     const hls = new HlsClass({
       enableWorker: !p2p,
       subtitleDisplay: false,
+      // One segment behind the edge, not the library's default three. The native player asks
+      // for the newest segment the moment it is published, so a hidden player that sits a
+      // whole live offset back can never hand it over — and the bridge then pays for that
+      // segment at the origin, which is the cost sharing is supposed to remove.
+      liveSyncDurationCount: 1,
+      liveMaxLatencyDurationCount: 3,
       ...(p2p ? { maxBufferLength: 60, maxMaxBufferLength: 120 } : {}),
       ...(p2p ?? {}),
     })
     player.hls = hls
     attachP2pStats(hls, src)
+    // A hidden media element can end up paused (the platform is under no obligation to let a
+    // 2x2 pixel element play), and a paused element stops the mesh from moving forward. This
+    // keeps the hidden player on the live edge, which is where its bytes are wanted.
+    const hugLiveEdge = () => {
+      try {
+        if (player.video.paused) void player.video.play().catch(() => {})
+      } catch {
+        /* an element that refuses to play still buffers, just further back */
+      }
+      try {
+        const edge = (hls as unknown as { liveSyncPosition?: number }).liveSyncPosition
+        if (typeof edge !== "number" || !Number.isFinite(edge)) return
+        if (Math.abs(player.video.currentTime - edge) > 2) player.video.currentTime = Math.max(0, edge)
+      } catch {
+        /* a seek that fails simply leaves the playhead where it was */
+      }
+    }
+    hls.on(Hls.Events.LEVEL_UPDATED, hugLiveEdge)
+    hls.on(Hls.Events.FRAG_BUFFERED, hugLiveEdge)
+    player.timer = window.setInterval(hugLiveEdge, 5000)
     // The load-bearing hook. A segment a peer supplied never touches the network, so the
     // request-level tee below cannot see it — and the bridge would then fetch that same
     // segment from the origin again, which is the exact cost sharing exists to remove. The
@@ -329,6 +360,10 @@ export async function liveBridgeStats(): Promise<LiveBridgeStats | null> {
 
 export function stopLiveBridge(): void {
   if (hidden) {
+    if (hidden.timer !== null) {
+      window.clearInterval(hidden.timer)
+      hidden.timer = null
+    }
     try {
       hidden.hls?.destroy()
     } catch {
